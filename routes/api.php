@@ -19,4 +19,4 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-Route::post('/record-clip', [CameraController::class, 'recordClip']);
+Route::post('/clip', [CameraController::class, 'clip']);
