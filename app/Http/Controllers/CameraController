@@ -1,0 +1,14 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Http\Controllers\Controller;
+
+class CameraController extends Controller
+{
+    public function recordClip()
+    {
+        shell_exec('python3 resources/py/record_clip.py');
+        return response()->json(['success' => true]);
+    }
+}
