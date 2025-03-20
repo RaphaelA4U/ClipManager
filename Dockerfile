@@ -1,32 +1,39 @@
-FROM php:8.2-fpm
+# Stage 1: Build the application
+FROM golang:1.21-alpine AS builder
 
-# Installeer PHP-dependencies en FFmpeg
-RUN apt-get update && apt-get install -y \
-    libzip-dev unzip git ffmpeg \
-    && docker-php-ext-install pdo_mysql zip
+WORKDIR /app
 
-# Installeer Node.js en npm
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
-    && npm install -g npm
+# Install git (needed for go get)
+RUN apk add --no-cache git
 
-WORKDIR /var/www
-COPY ./app .
+# Copy source code
+COPY . .
 
-# Installeer Composer en PHP-dependencies
-RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \
-    && composer install --no-dev --optimize-autoloader
+# Initialize a fresh Go module
+RUN rm -f go.mod go.sum
+RUN go mod init github.com/RaphaelA4U/ClipManager
+RUN go get github.com/joho/godotenv@v1.5.1
+RUN go get github.com/u2takey/ffmpeg-go@v0.5.0
+RUN go mod tidy
 
-# Installeer Node-dependencies en bouw de frontend
-RUN npm ci \
-    && npm run build
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o clipmanager main.go
 
-# Stel rechten in voor Laravel storage en cache
-RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache \
-    && chmod -R 775 /var/www/storage /var/www/bootstrap/cache
+# Stage 2: Final image with FFmpeg installed directly
+FROM alpine:3.18
 
-# Entrypoint voor scheduler
-COPY entrypoint.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/entrypoint.sh
-ENTRYPOINT ["entrypoint.sh"]
-CMD ["php-fpm"]
+WORKDIR /app
+
+# Install FFmpeg and dependencies directly in the final image
+RUN apk add --no-cache ffmpeg
+
+# Create clips directory
+RUN mkdir -p /app/clips
+
+# Copy the binary
+COPY --from=builder /app/clipmanager .
+
+# Expose port
+EXPOSE 8080
+
+CMD ["./clipmanager"]
