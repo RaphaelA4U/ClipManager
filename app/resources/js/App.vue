@@ -65,10 +65,6 @@ export default {
     methods: {
         async saveSettings() {
             // Client-side validatie
-            if (!this.cameraIp || !this.cameraIp.match(/^https?:\/\/.+/)) {
-                alert('Vul een geldige Camera IP in (bijv. http://example.com)');
-                return;
-            }
             if (!this.chatApp) {
                 alert('Kies een Chat app');
                 return;
