@@ -11,7 +11,8 @@ return new class extends Migration {
             $table->id();
             $table->string('camera_ip');
             $table->string('chat_app');
-            $table->string('chat_token');
+            $table->string('bot_token');
+            $table->string('chat_id');
             $table->integer('log_retention');
             $table->integer('video_retention');
             $table->timestamps();
