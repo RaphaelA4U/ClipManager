@@ -51,8 +51,8 @@ Make a GET or POST request to `localhost:5000/api/clip` with the following param
 ### Telegram-specific Parameters
 | Parameter | Description | Example | Required for Telegram |
 |-----------|-------------|-----------|-----------|
-| bot_token | The Telegram bot token | 123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ | Yes |
-| chat_id | The Telegram chat ID | -100123456789 | Yes |
+| telegram_bot_token | The Telegram bot token | 123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ | Yes |
+| telegram_chat_id | The Telegram chat ID | -100123456789 | Yes |
 
 ### Mattermost-specific Parameters
 | Parameter | Description | Example | Required for Mattermost |
@@ -63,7 +63,7 @@ Make a GET or POST request to `localhost:5000/api/clip` with the following param
 
 ### GET example (Telegram):
 ```bash
-curl "localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=telegram&bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&chat_id=-100123456789&backtrack_seconds=10&duration_seconds=10"
+curl "localhost:8080/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=telegram&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789&backtrack_seconds=10&duration_seconds=10"
 ```
 
 ### GET example (Mattermost):
@@ -73,7 +73,7 @@ curl "localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/
 
 ### POST example (Telegram):
 ```bash
-curl -X POST localhost:5000/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"telegram","bot_token":"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ","chat_id":"-100123456789","backtrack_seconds":10,"duration_seconds":10}'
+curl -X POST localhost:8080/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"telegram","telegram_bot_token":"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ","telegram_chat_id":"-100123456789","backtrack_seconds":10,"duration_seconds":10}'
 ```
 
 ### POST example (Mattermost):
@@ -101,7 +101,7 @@ On errors, you will receive an HTTP error code with a description.
 ## Troubleshooting
 
 - **FFmpeg errors**: Make sure the `camera_ip` is correct and the RTSP stream is accessible.
-- **Telegram errors**: Check if the `bot_token` and `chat_id` are correct.
+- **Telegram errors**: Check if the `telegram_bot_token` and `telegram_chat_id` are correct.
 - **Mattermost errors**: Check if the `mattermost_url`, `mattermost_token`, and `mattermost_channel` are correct.
 - **Logs**: View the Docker logs for more information:
   ```bash

@@ -21,11 +21,12 @@ import (
 type ClipRequest struct {
 	CameraIP         string `json:"camera_ip"`
 	ChatApp          string `json:"chat_app"`
-	BotToken         string `json:"bot_token"`         // For Telegram
-	ChatID           string `json:"chat_id"`           // For Telegram
-	MattermostURL    string `json:"mattermost_url"`    // For Mattermost (e.g. https://mattermost.example.com)
-	MattermostToken  string `json:"mattermost_token"`  // For Mattermost API token
-	MattermostChannel string `json:"mattermost_channel"` // For Mattermost channel ID
+	BotToken         string `json:"telegram_bot_token"` // For Telegram
+	ChatID           string `json:"telegram_chat_id"`   // For Telegram
+	MattermostURL    string `json:"mattermost_url"`     // For Mattermost (e.g. https://mattermost.example.com)
+	MattermostToken  string `json:"mattermost_token"`  	// For Mattermost API token
+	MattermostChannel string `json:"mattermost_channel"`// For Mattermost channel ID
+	DiscordWebhookURL string `json:"discord_webhook_url"` // For Discord
 	BacktrackSeconds int    `json:"backtrack_seconds"`
 	DurationSeconds  int    `json:"duration_seconds"`
 }
@@ -65,8 +66,8 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 		// Parse query parameters for GET
 		req.CameraIP = r.URL.Query().Get("camera_ip")
 		req.ChatApp = r.URL.Query().Get("chat_app")
-		req.BotToken = r.URL.Query().Get("bot_token")
-		req.ChatID = r.URL.Query().Get("chat_id")
+		req.BotToken = r.URL.Query().Get("telegram_bot_token")
+		req.ChatID = r.URL.Query().Get("telegram_chat_id")
 		req.MattermostURL = r.URL.Query().Get("mattermost_url")
 		req.MattermostToken = r.URL.Query().Get("mattermost_token")
 		req.MattermostChannel = r.URL.Query().Get("mattermost_channel")
@@ -109,7 +110,7 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 	switch req.ChatApp {
 	case "telegram":
 		if req.BotToken == "" || req.ChatID == "" {
-			http.Error(w, "For Telegram, bot_token and chat_id are required", http.StatusBadRequest)
+			http.Error(w, "For Telegram, telegram_bot_token and telegram_chat_id are required", http.StatusBadRequest)
 			return
 		}
 	case "mattermost":
@@ -119,8 +120,13 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		// Make sure MattermostURL has no trailing slash
 		req.MattermostURL = strings.TrimSuffix(req.MattermostURL, "/")
+	case "discord":
+		if req.DiscordWebhookURL == "" {
+			http.Error(w, "For Discord, discord_webhook_url is required", http.StatusBadRequest)
+			return
+		}
 	default:
-		http.Error(w, "Only 'telegram' and 'mattermost' are supported as chat_app", http.StatusBadRequest)
+		http.Error(w, "Only 'telegram', 'mattermost', and 'discord' are supported as chat_app", http.StatusBadRequest)
 		return
 	}
 
@@ -194,7 +200,7 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
                 "c:a":      "aac",
                 "b:a":      "128k",
                 "movflags": "+faststart",
-            }).
+            }). 
             OverWriteOutput()
             
         log.Printf("Compression command: %s", compressCmd.String())
@@ -226,6 +232,8 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 			sendToTelegram(finalFilePath, req.BotToken, req.ChatID)
 		case "mattermost":
 			sendToMattermost(finalFilePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel)
+		case "discord":
+			sendToDiscord(finalFilePath, req.DiscordWebhookURL)
 		}
 	}()
 
@@ -247,15 +255,15 @@ func sendToTelegram(filePath, botToken, chatID string) {
     // Generate timestamp message
     captionText := fmt.Sprintf("New Clip: %s", formatCurrentTime())
 
-    // Make sure the chat_id is properly formatted (remove any quotes)
+    // Make sure the telegram_chat_id is properly formatted (remove any quotes)
     chatID = strings.Trim(chatID, `"'`)
     
     // Log the chat ID for debugging (sanitized)
-    log.Printf("Sending to Telegram with chat_id length: %d", len(chatID))
+    log.Printf("Sending to Telegram with telegram_chat_id length: %d", len(chatID))
     
-    // Ensure chat_id is not empty
+    // Ensure telegram_chat_id is not empty
     if chatID == "" {
-        log.Printf("Error: chat_id is empty, cannot send to Telegram")
+        log.Printf("Error: telegram_chat_id is empty, cannot send to Telegram")
         return
     }
     
@@ -270,9 +278,9 @@ func sendToTelegram(filePath, botToken, chatID string) {
     var requestBody bytes.Buffer
     writer := multipart.NewWriter(&requestBody)
     
-    // Add the chat_id field
-    if err := writer.WriteField("chat_id", chatID); err != nil {
-        log.Printf("Could not add chat_id to request: %v", err)
+    // Add the telegram_chat_id field
+    if err := writer.WriteField("telegram_chat_id", chatID); err != nil {
+        log.Printf("Could not add telegram_chat_id to request: %v", err)
         return
     }
     
@@ -333,7 +341,7 @@ func sendToTelegram(filePath, botToken, chatID string) {
 // Helper function to get file size
 func getFileSize(filePath string) int64 {
     info, err := os.Stat(filePath)
-    if err != nil {
+    if (err != nil) {
         return 0
     }
     return info.Size()
@@ -466,6 +474,79 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string) {
     log.Printf("Clip successfully sent to Mattermost")
 }
 
+// Function to send to Discord
+func sendToDiscord(filePath, webhookURL string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("Could not open file for sending to Discord: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Generate timestamp message
+	messageText := fmt.Sprintf("New Clip: %s", formatCurrentTime())
+
+	// Create a multipart form for the file
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	
+	// Add message text with timestamp
+	if err := writer.WriteField("content", messageText); err != nil {
+		log.Printf("Could not add content to request: %v", err)
+		return
+	}
+	
+	// Add the file
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		log.Printf("Could not create file field: %v", err)
+		return
+	}
+	
+	if _, err := io.Copy(part, file); err != nil {
+		log.Printf("Could not copy file to request: %v", err)
+		return
+	}
+	
+	// Close the writer
+	if err := writer.Close(); err != nil {
+		log.Printf("Could not close multipart writer: %v", err)
+		return
+	}
+
+	// Debug logging (without sensitive data)
+	log.Printf("Sending to Discord. File path: %s, File size: %d bytes", 
+		filepath.Base(filePath), getFileSize(filePath))
+
+	// Create an HTTP POST request
+	req, err := http.NewRequest("POST", webhookURL, &requestBody)
+	if err != nil {
+		log.Printf("Could not create Discord request: %v", err)
+		return
+	}
+	
+	// Set the content type
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	
+	// Execute the request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error when sending to Discord: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	
+	// Check the response
+	if resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("Discord API error: %s - %s", resp.Status, string(bodyBytes))
+		return
+	}
+	
+	log.Printf("Clip successfully sent to Discord")
+}
+
 // Helper to create multipart form data
 type multipartForm struct {
 	fields map[string]string
@@ -534,12 +615,16 @@ func sanitizeLogMessage(message string) string {
     message = re.ReplaceAllString(message, "[REDACTED-BOT-TOKEN]")
     
     // Hide Telegram chat IDs
-    re = regexp.MustCompile(`chat_id=(-?\d+)`)
-    message = re.ReplaceAllString(message, "chat_id=[REDACTED-CHAT-ID]")
+    re = regexp.MustCompile(`telegram_chat_id=(-?\d+)`)
+    message = re.ReplaceAllString(message, "telegram_chat_id=[REDACTED-CHAT-ID]")
     
     // Hide Mattermost tokens
     re = regexp.MustCompile(`Bearer\s+[a-zA-Z0-9]+`)
     message = re.ReplaceAllString(message, "Bearer [REDACTED-TOKEN]")
+    
+    // Hide Discord webhook URLs
+    re = regexp.MustCompile(`https://discord\.com/api/webhooks/[^/\s]+/[^/\s]+`)
+    message = re.ReplaceAllString(message, "https://discord.com/api/webhooks/[REDACTED]/[REDACTED]")
     
     return message
 }
