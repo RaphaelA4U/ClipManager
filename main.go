@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -18,8 +21,11 @@ import (
 type ClipRequest struct {
 	CameraIP         string `json:"camera_ip"`
 	ChatApp          string `json:"chat_app"`
-	BotToken         string `json:"bot_token"`
-	ChatID           string `json:"chat_id"`
+	BotToken         string `json:"bot_token"`         // For Telegram
+	ChatID           string `json:"chat_id"`           // For Telegram
+	MattermostURL    string `json:"mattermost_url"`    // For Mattermost (e.g. https://mattermost.example.com)
+	MattermostToken  string `json:"mattermost_token"`  // For Mattermost API token
+	MattermostChannel string `json:"mattermost_channel"` // For Mattermost channel ID
 	BacktrackSeconds int    `json:"backtrack_seconds"`
 	DurationSeconds  int    `json:"duration_seconds"`
 }
@@ -29,38 +35,41 @@ type ClipResponse struct {
 }
 
 func main() {
-	// Laad .env-bestand
+	// Load .env file
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("Geen .env-bestand gevonden, gebruik standaardwaarden")
+		log.Println("No .env file found, using default values")
 	}
 
-	// Haal de poort uit .env, standaard 8080
+	// Get port from .env, default is 8080
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	// Stel de HTTP-server in
+	// Set up HTTP server
 	http.HandleFunc("/api/clip", handleClipRequest)
 
-	// Log het opstartbericht
-	log.Printf("ClipManager gestart! Maak een GET/POST request naar localhost:%s/api/clip met parameters: camera_ip, chat_app, bot_token, chat_id, backtrack_seconds, duration_seconds", port)
+	// Log startup message
+	log.Printf("ClipManager started! Make a GET/POST request to localhost:%s/api/clip with parameters: camera_ip, chat_app, bot_token, chat_id, backtrack_seconds, duration_seconds", port)
 
-	// Start de server
+	// Start the server
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func handleClipRequest(w http.ResponseWriter, r *http.Request) {
-	// Accepteer zowel GET als POST
+	// Accept both GET and POST
 	var req ClipRequest
 
 	if r.Method == http.MethodGet {
-		// Parse query parameters voor GET
+		// Parse query parameters for GET
 		req.CameraIP = r.URL.Query().Get("camera_ip")
 		req.ChatApp = r.URL.Query().Get("chat_app")
 		req.BotToken = r.URL.Query().Get("bot_token")
 		req.ChatID = r.URL.Query().Get("chat_id")
+		req.MattermostURL = r.URL.Query().Get("mattermost_url")
+		req.MattermostToken = r.URL.Query().Get("mattermost_token")
+		req.MattermostChannel = r.URL.Query().Get("mattermost_channel")
 		backtrackSeconds := r.URL.Query().Get("backtrack_seconds")
 		durationSeconds := r.URL.Query().Get("duration_seconds")
 
@@ -71,161 +80,343 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 			fmt.Sscanf(durationSeconds, "%d", &req.DurationSeconds)
 		}
 	} else if r.Method == http.MethodPost {
-		// Parse JSON-body voor POST
+		// Parse JSON body for POST
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Ongeldige JSON-body", http.StatusBadRequest)
+			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
 			return
 		}
 	} else {
-		http.Error(w, "Methode niet toegestaan, gebruik GET of POST", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed, use GET or POST", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Valideer de parameters
-	if req.CameraIP == "" || req.ChatApp == "" || req.BotToken == "" || req.ChatID == "" {
-		http.Error(w, "Missende parameters: camera_ip, chat_app, bot_token, en chat_id zijn verplicht", http.StatusBadRequest)
+	// Validate common parameters
+	if req.CameraIP == "" || req.ChatApp == "" {
+		http.Error(w, "Missing parameters: camera_ip and chat_app are required", http.StatusBadRequest)
 		return
 	}
 	if req.BacktrackSeconds < 5 || req.BacktrackSeconds > 300 {
-		http.Error(w, "backtrack_seconds moet tussen 5 en 300 liggen", http.StatusBadRequest)
+		http.Error(w, "backtrack_seconds must be between 5 and 300", http.StatusBadRequest)
 		return
 	}
 	if req.DurationSeconds < 5 || req.DurationSeconds > 300 {
-		http.Error(w, "duration_seconds moet tussen 5 en 300 liggen", http.StatusBadRequest)
-		return
-	}
-	if req.ChatApp != "Telegram" {
-		http.Error(w, "Alleen Telegram wordt ondersteund als chat_app", http.StatusBadRequest)
+		http.Error(w, "duration_seconds must be between 5 and 300", http.StatusBadRequest)
 		return
 	}
 
-	// Maak een tijdelijke directory voor de clip
+	// Chat app-specific validation
+	req.ChatApp = strings.ToLower(req.ChatApp)
+	switch req.ChatApp {
+	case "telegram":
+		if req.BotToken == "" || req.ChatID == "" {
+			http.Error(w, "For Telegram, bot_token and chat_id are required", http.StatusBadRequest)
+			return
+		}
+	case "mattermost":
+		if req.MattermostURL == "" || req.MattermostToken == "" || req.MattermostChannel == "" {
+			http.Error(w, "For Mattermost, mattermost_url, mattermost_token and mattermost_channel are required", http.StatusBadRequest)
+			return
+		}
+		// Make sure MattermostURL has no trailing slash
+		req.MattermostURL = strings.TrimSuffix(req.MattermostURL, "/")
+	default:
+		http.Error(w, "Only 'telegram' and 'mattermost' are supported as chat_app", http.StatusBadRequest)
+		return
+	}
+
+	// Create a temporary directory for the clip
 	tempDir := "clips"
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		http.Error(w, "Kon tijdelijke directory niet aanmaken", http.StatusInternalServerError)
+		http.Error(w, "Could not create temporary directory", http.StatusInternalServerError)
 		return
 	}
 
-	// Genereer een unieke bestandsnaam
+	// Generate a unique filename
 	fileName := fmt.Sprintf("clip_%d.mp4", time.Now().Unix())
 	filePath := filepath.Join(tempDir, fileName)
 	compressedFilePath := filepath.Join(tempDir, "compressed_"+fileName)
 
-	// Neem eerst de clip op zonder compressie
+	// First record the clip without compression
 	outputArgs := ffmpeg.KwArgs{
 		"ss":         req.BacktrackSeconds,
 		"t":          req.DurationSeconds,
-		"c:v":        "copy",  // Kopieer video zonder hercodering
-		"c:a":        "copy",  // Kopieer audio zonder hercodering
+		"c:v":        "copy",  // Copy video without re-encoding
+		"c:a":        "copy",  // Copy audio without re-encoding
 		"movflags":   "+faststart",
 	}
 
-	// Neem de clip op met FFmpeg
-	err := ffmpeg.Input(req.CameraIP, ffmpeg.KwArgs{"rtsp_transport": "tcp"}).
-		Output(filePath, outputArgs).
-		OverWriteOutput().
-		Run()
-	if err != nil {
-		log.Printf("FFmpeg fout: %v", err)
-		http.Error(w, "Kon de clip niet opnemen", http.StatusInternalServerError)
-		return
-	}
+	// Record the clip with FFmpeg
+    ffmpegCmd := ffmpeg.Input(req.CameraIP, ffmpeg.KwArgs{"rtsp_transport": "tcp"}).
+        Output(filePath, outputArgs).
+        OverWriteOutput()
+    
+    // Log the command (sanitized version)
+    logCmd := sanitizeLogMessage(ffmpegCmd.String())
+    log.Printf("FFmpeg command: %s", logCmd)
+    
+    err := ffmpegCmd.Run()
+    if err != nil {
+        log.Printf("FFmpeg error: %v", err)
+        http.Error(w, "Could not record the clip", http.StatusInternalServerError)
+        return
+    }
 
-	// Controleer of het bestand bestaat en niet te klein is
+	// Check if the file exists and is not too small
 	fileInfo, err := os.Stat(filePath)
 	if err != nil || fileInfo.Size() < 1024 {
-		os.Remove(filePath) // Verwijder het bestand bij fout
-		http.Error(w, "Kon de clip niet opnemen, bestand te klein", http.StatusInternalServerError)
+		os.Remove(filePath) // Remove the file in case of error
+		http.Error(w, "Could not record the clip, file too small", http.StatusInternalServerError)
 		return
 	}
 
-	// Controleer bestandsgrootte en comprimeer alleen als > 50MB
+	// Check file size and compress only if > 50MB
 	finalFilePath := filePath
-	if fileInfo.Size() > 50*1024*1024 { // 50MB in bytes
-		log.Printf("Bestand is groter dan 50MB (%d bytes), compressie wordt toegepast", fileInfo.Size())
-		
-		// Comprimeer naar 1920x1080
-		err = ffmpeg.Input(filePath).
-			Output(compressedFilePath, ffmpeg.KwArgs{
-				"vf":      "scale=1920:1080",
-				"c:v":     "libx264",
-				"preset":  "medium",
-				"crf":     "23",
-				"c:a":     "aac",
-				"b:a":     "128k",
-				"movflags": "+faststart",
-			}).
-			OverWriteOutput().
-			Run()
-			
-		if err != nil {
-			log.Printf("Compressie fout: %v, origineel bestand wordt gebruikt", err)
-		} else {
-			// Gebruik het gecomprimeerde bestand en verwijder het origineel
-			os.Remove(filePath)
-			finalFilePath = compressedFilePath
-		}
+	fileInfo, err = os.Stat(filePath)
+	if err != nil {
+		log.Printf("Could not get file information: %v", err)
+		http.Error(w, "Could not process the clip", http.StatusInternalServerError)
+		return
 	}
+    
+    fileSizeMB := float64(fileInfo.Size()) / 1024 / 1024
+    log.Printf("Original file size: %.2f MB", fileSizeMB)
+    
+    if fileInfo.Size() > 50*1024*1024 { // 50MB in bytes
+        log.Printf("File is larger than 50MB (%.2f MB), applying compression", fileSizeMB)
+        
+        // Compress to 1920x1080 while maintaining aspect ratio
+        compressCmd := ffmpeg.Input(filePath).
+            Output(compressedFilePath, ffmpeg.KwArgs{
+                "vf":       "scale=1920:-2",  // Scale to 1920px width, auto height to preserve aspect ratio
+                "c:v":      "libx264",
+                "preset":   "medium",  // Better quality than "ultrafast"
+                "crf":      "23",      // Good quality (lower = better quality)
+                "c:a":      "aac",
+                "b:a":      "128k",
+                "movflags": "+faststart",
+            }).
+            OverWriteOutput()
+            
+        log.Printf("Compression command: %s", compressCmd.String())
+        
+        err = compressCmd.Run()
+        if err != nil {
+            log.Printf("Compression error: %v, using original file", err)
+        } else {
+            // Check compressed file size
+            compressedInfo, err := os.Stat(compressedFilePath)
+            if err == nil {
+                compressedSizeMB := float64(compressedInfo.Size()) / 1024 / 1024
+                log.Printf("Compressed file size: %.2f MB (%.1f%% of original)", 
+                    compressedSizeMB, (compressedSizeMB/fileSizeMB)*100)
+            }
+            
+            // Use the compressed file and remove the original
+            os.Remove(filePath)
+            finalFilePath = compressedFilePath
+        }
+    }
 
-	// Verstuur de clip naar Telegram (asynchroon)
+	// Send the clip to the chosen chat app (asynchronously)
 	go func() {
-		defer os.Remove(finalFilePath) // Zorg ervoor dat het bestand altijd wordt verwijderd
+		defer os.Remove(finalFilePath) // Make sure the file is always removed
 
-		file, err := os.Open(finalFilePath)
-		if err != nil {
-			log.Printf("Kon het bestand niet openen voor verzending: %v", err)
-			return
+		switch req.ChatApp {
+		case "telegram":
+			sendToTelegram(finalFilePath, req.BotToken, req.ChatID)
+		case "mattermost":
+			sendToMattermost(finalFilePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel)
 		}
-		defer file.Close()
-
-		reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", req.BotToken)
-		client := &http.Client{Timeout: 30 * time.Second}
-		multipartReq, err := http.NewRequest("POST", reqURL, nil)
-		if err != nil {
-			log.Printf("Kon Telegram-verzoek niet aanmaken: %v", err)
-			return
-		}
-
-		form := &multipartForm{
-			fields: map[string]string{
-				"chat_id": req.ChatID,
-				"caption": "Nieuwe clip opgenomen!",
-			},
-			files: map[string]*os.File{
-				"video": file,
-			},
-		}
-		body, contentType, err := form.Build()
-		if err != nil {
-			log.Printf("Kon multipart-form niet aanmaken: %v", err)
-			return
-		}
-
-		multipartReq.Header.Set("Content-Type", contentType)
-		multipartReq.Body = body
-
-		resp, err := client.Do(multipartReq)
-		if err != nil {
-			log.Printf("Fout bij verzenden naar Telegram: %v", err)
-			return
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			log.Printf("Telegram API fout: %s", resp.Status)
-			return
-		}
-
-		log.Printf("Clip succesvol verzonden naar Telegram")
 	}()
 
-	// Stuur direct een succesresponse
-	response := ClipResponse{Message: "Clip opgenomen en verzending gestart"}
+	// Send success response immediately
+	response := ClipResponse{Message: "Clip recorded and sending started"}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
-// Helper om multipart-form data te maken
+// Function to send to Telegram
+func sendToTelegram(filePath, botToken, chatID string) {
+    file, err := os.Open(filePath)
+    if err != nil {
+        log.Printf("Could not open file for sending to Telegram: %v", err)
+        return
+    }
+    defer file.Close()
+
+    // Generate timestamp message
+    captionText := fmt.Sprintf("New Clip: %s", formatCurrentTime())
+
+    // Make sure the chat_id is properly formatted (remove any quotes)
+    chatID = strings.Trim(chatID, `"'`)
+    
+    // Log the chat ID for debugging (sanitized)
+    log.Printf("Sending to Telegram with chat_id length: %d", len(chatID))
+    
+    // Ensure chat_id is not empty
+    if chatID == "" {
+        log.Printf("Error: chat_id is empty, cannot send to Telegram")
+        return
+    }
+    
+    reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
+    client := &http.Client{Timeout: 60 * time.Second} // Increased timeout for large files
+    
+    // Debug logging (without sensitive data)
+    log.Printf("Sending to Telegram. File path: %s, File size: %d bytes", 
+        filepath.Base(filePath), getFileSize(filePath))
+
+    // Create the multipart form
+    var requestBody bytes.Buffer
+    writer := multipart.NewWriter(&requestBody)
+    
+    // Add the chat_id field
+    if err := writer.WriteField("chat_id", chatID); err != nil {
+        log.Printf("Could not add chat_id to request: %v", err)
+        return
+    }
+    
+    // Add the caption field
+    if err := writer.WriteField("caption", captionText); err != nil {
+        log.Printf("Could not add caption to request: %v", err)
+        return
+    }
+    
+    // Add the video file
+    part, err := writer.CreateFormFile("video", filepath.Base(filePath))
+    if err != nil {
+        log.Printf("Could not create file field: %v", err)
+        return
+    }
+    
+    if _, err := io.Copy(part, file); err != nil {
+        log.Printf("Could not copy file to request: %v", err)
+        return
+    }
+    
+    // Close the writer
+    if err := writer.Close(); err != nil {
+        log.Printf("Could not close multipart writer: %v", err)
+        return
+    }
+
+    // Create an HTTP POST request
+    req, err := http.NewRequest("POST", reqURL, &requestBody)
+    if err != nil {
+        log.Printf("Could not create Telegram request: %v", err)
+        return
+    }
+    
+    // Set the content type
+    req.Header.Set("Content-Type", writer.FormDataContentType())
+    
+    // Execute the request
+    resp, err := client.Do(req)
+    if err != nil {
+        log.Printf("Error when sending to Telegram: %v", err)
+        return
+    }
+    defer resp.Body.Close()
+
+    // Read and log the response
+    bodyBytes, _ := io.ReadAll(resp.Body)
+    responseBody := string(bodyBytes)
+    
+    if resp.StatusCode != http.StatusOK {
+        log.Printf("Telegram API error: %s - %s", resp.Status, responseBody)
+        return
+    }
+
+    log.Printf("Clip successfully sent to Telegram: %s", responseBody)
+}
+
+// Helper function to get file size
+func getFileSize(filePath string) int64 {
+    info, err := os.Stat(filePath)
+    if err != nil {
+        return 0
+    }
+    return info.Size()
+}
+
+// Function to send to Mattermost
+func sendToMattermost(filePath, mattermostURL, token, channelID string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("Could not open file for sending to Mattermost: %v", err)
+		return
+	}
+	defer file.Close()
+
+	// Generate timestamp message
+	messageText := fmt.Sprintf("New Clip: %s", formatCurrentTime())
+
+	// Create a multipart form for the file
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	
+	// Add the channel ID
+	if err := writer.WriteField("channel_id", channelID); err != nil {
+		log.Printf("Could not add channel_id to request: %v", err)
+		return
+	}
+	
+	// Add message text with timestamp
+	if err := writer.WriteField("message", messageText); err != nil {
+		log.Printf("Could not add message to request: %v", err)
+		return
+	}
+	
+	// Add the file
+	part, err := writer.CreateFormFile("files", filepath.Base(filePath))
+	if err != nil {
+		log.Printf("Could not create file field: %v", err)
+		return
+	}
+	
+	if _, err := io.Copy(part, file); err != nil {
+		log.Printf("Could not copy file to request: %v", err)
+		return
+	}
+	
+	// Close the writer
+	if err := writer.Close(); err != nil {
+		log.Printf("Could not close multipart writer: %v", err)
+		return
+	}
+
+	// Create an HTTP POST request
+	reqURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
+	req, err := http.NewRequest("POST", reqURL, &requestBody)
+	if err != nil {
+		log.Printf("Could not create Mattermost request: %v", err)
+		return
+	}
+	
+	// Set the headers
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+token)
+	
+	// Execute the request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("Error when sending to Mattermost: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	
+	// Check the response
+	if resp.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("Mattermost API error: %s - %s", resp.Status, string(bodyBytes))
+		return
+	}
+	
+	log.Printf("Clip successfully sent to Mattermost")
+}
+
+// Helper to create multipart form data
 type multipartForm struct {
 	fields map[string]string
 	files  map[string]*os.File
@@ -240,7 +431,7 @@ func (mf *multipartForm) Build() (body *os.File, contentType string, err error) 
 	writer := multipart.NewWriter(bodyFile)
 	defer writer.Close()
 
-	// Voeg velden toe
+	// Add fields
 	for key, value := range mf.fields {
 		if err := writer.WriteField(key, value); err != nil {
 			bodyFile.Close()
@@ -249,7 +440,7 @@ func (mf *multipartForm) Build() (body *os.File, contentType string, err error) 
 		}
 	}
 
-	// Voeg bestanden toe
+	// Add files
 	for key, file := range mf.files {
 		part, err := writer.CreateFormFile(key, filepath.Base(file.Name()))
 		if err != nil {
@@ -264,10 +455,10 @@ func (mf *multipartForm) Build() (body *os.File, contentType string, err error) 
 		}
 	}
 
-	// Sluit de writer om de boundary te schrijven
+	// Close the writer to write the boundary
 	writer.Close()
 
-	// Zet de file pointer terug naar het begin
+	// Set the file pointer back to the beginning
 	if _, err := bodyFile.Seek(0, 0); err != nil {
 		bodyFile.Close()
 		os.Remove(bodyFile.Name())
@@ -275,4 +466,44 @@ func (mf *multipartForm) Build() (body *os.File, contentType string, err error) 
 	}
 
 	return bodyFile, writer.FormDataContentType(), nil
+}
+
+// Helper function to format current date-time
+func formatCurrentTime() string {
+	return time.Now().Format("2006-01-02 15:04")
+}
+
+// SanitizeLogMessage removes sensitive information from log messages
+func sanitizeLogMessage(message string) string {
+    // Hide camera IP/credentials
+    re := regexp.MustCompile(`rtsp://[^@]+@[^/\s]+`)
+    message = re.ReplaceAllString(message, "rtsp://[REDACTED]@[REDACTED]")
+    
+    // Hide Telegram bot tokens (format: 123456789:ABCDEFGhijklmnopqrstuvwxyz...)
+    re = regexp.MustCompile(`\b\d+:[\w-]{35,}\b`)
+    message = re.ReplaceAllString(message, "[REDACTED-BOT-TOKEN]")
+    
+    // Hide Telegram chat IDs
+    re = regexp.MustCompile(`chat_id=(-?\d+)`)
+    message = re.ReplaceAllString(message, "chat_id=[REDACTED-CHAT-ID]")
+    
+    // Hide Mattermost tokens
+    re = regexp.MustCompile(`Bearer\s+[a-zA-Z0-9]+`)
+    message = re.ReplaceAllString(message, "Bearer [REDACTED-TOKEN]")
+    
+    return message
+}
+
+type logSanitizer struct {
+    out io.Writer
+}
+
+func (l *logSanitizer) Write(p []byte) (n int, err error) {
+    sanitized := sanitizeLogMessage(string(p))
+    return l.out.Write([]byte(sanitized))
+}
+
+func init() {
+    // Use os.Stdout directly instead of logger.Writer()
+    log.SetOutput(&logSanitizer{os.Stdout})
 }

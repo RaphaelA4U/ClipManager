@@ -1,84 +1,107 @@
 # ClipManager
 
-Een eenvoudige, snelle en lichtgewicht applicatie om clips op te nemen van een RTSP-camera en te verzenden naar Telegram.
+A simple, fast and lightweight application to record clips from an RTSP camera and send them to Telegram or Mattermost.
 
-## Vereisten
-- Docker en Docker Compose
-- Een RTSP-camera (bijv. `rtsp://gebruiker:wachtwoord@camera-ip:poort/pad`)
-- Een Telegram-bot token en chat ID
+## Requirements
+- Docker and Docker Compose
+- An RTSP camera (e.g. `rtsp://username:password@camera-ip:port/path`)
+- A Telegram bot token and chat ID, or a Mattermost server with API token and channel ID
 
-## Installatie
-1. **Clone de repository**:
+## Installation
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/RaphaelA4U/ClipManager
    cd clipmanager
    ```
 
-2. **Configureer de poort (optioneel)**: Kopieer `.env.example` naar `.env` en stel de poort in (standaard 8080):
+2. **Configure the port (optional)**: Copy `.env.example` to `.env` and set the port (default 8080):
    ```bash
    cp .env.example .env
    ```
    
-   Bewerk `.env` indien nodig:
+   Edit `.env` if needed:
    ```
    PORT=8080
    ```
 
-3. **Start de applicatie**:
+3. **Start the application**:
    ```bash
    docker-compose up --build
    ```
 
-4. **Controleer de logs**: Bij het opstarten zie je een bericht zoals:
+4. **Check the logs**: At startup, you will see a message like:
    ```
-   ClipManager gestart! Maak een GET/POST request naar localhost:8080/api/clip met parameters: camera_ip, chat_app, bot_token, chat_id, backtrack_seconds, duration_seconds
+   ClipManager started! Make a GET/POST request to localhost:8080/api/clip with parameters: camera_ip, chat_app, bot_token, chat_id, backtrack_seconds, duration_seconds
    ```
 
-## Gebruik
+## Usage
 
-Maak een GET- of POST-verzoek naar `localhost:8080/api/clip` met de volgende parameters:
+Make a GET or POST request to `localhost:8080/api/clip` with the following parameters:
 
-### Parameters
-| Parameter | Beschrijving | Voorbeeld | Verplicht |
+### Common Parameters
+| Parameter | Description | Example | Required |
 |-----------|-------------|-----------|-----------|
-| camera_ip | De RTSP-URL van de camera | rtsp://gebruiker:wachtwoord@camera-ip:poort/pad | Ja |
-| chat_app | De chat-app (alleen Telegram ondersteund) | Telegram | Ja |
-| bot_token | De Telegram bot token | 123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ | Ja |
-| chat_id | De Telegram chat ID | -100123456789 | Ja |
-| backtrack_seconds | Aantal seconden terug om op te nemen | 10 | Ja |
-| duration_seconds | Duur van de clip in seconden | 10 | Ja |
+| camera_ip | The RTSP URL of the camera | rtsp://username:password@camera-ip:port/path | Yes |
+| chat_app | The chat app ("telegram" or "mattermost") | telegram | Yes |
+| backtrack_seconds | Number of seconds to go back for recording | 10 | Yes |
+| duration_seconds | Duration of the clip in seconds | 10 | Yes |
 
-### GET-voorbeeld:
+### Telegram-specific Parameters
+| Parameter | Description | Example | Required for Telegram |
+|-----------|-------------|-----------|-----------|
+| bot_token | The Telegram bot token | 123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ | Yes |
+| chat_id | The Telegram chat ID | -100123456789 | Yes |
+
+### Mattermost-specific Parameters
+| Parameter | Description | Example | Required for Mattermost |
+|-----------|-------------|-----------|-----------|
+| mattermost_url | The URL of the Mattermost server | https://mattermost.example.com | Yes |
+| mattermost_token | The Mattermost API token | abcdefghijklmnopqrstuvwxyz | Yes |
+| mattermost_channel | The Mattermost channel ID | 123456789abcdefghijklmn | Yes |
+
+### GET example (Telegram):
 ```bash
-curl "localhost:8080/api/clip?camera_ip=rtsp://gebruiker:wachtwoord@camera-ip:poort/pad&chat_app=Telegram&bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&chat_id=-100123456789&backtrack_seconds=10&duration_seconds=10"
+curl "localhost:8080/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=telegram&bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&chat_id=-100123456789&backtrack_seconds=10&duration_seconds=10"
 ```
 
-### POST-voorbeeld:
+### GET example (Mattermost):
 ```bash
-curl -X POST localhost:8080/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://gebruiker:wachtwoord@camera-ip:poort/pad","chat_app":"Telegram","bot_token":"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ","chat_id":"-100123456789","backtrack_seconds":10,"duration_seconds":10}'
+curl "localhost:8080/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn&backtrack_seconds=10&duration_seconds=10"
+```
+
+### POST example (Telegram):
+```bash
+curl -X POST localhost:8080/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"telegram","bot_token":"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ","chat_id":"-100123456789","backtrack_seconds":10,"duration_seconds":10}'
+```
+
+### POST example (Mattermost):
+```bash
+curl -X POST localhost:8080/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"mattermost","mattermost_url":"https://mattermost.example.com","mattermost_token":"abcdefghijklmnopqrstuvwxyz","mattermost_channel":"123456789abcdefghijklmn","backtrack_seconds":10,"duration_seconds":10}'
 ```
 
 ### Response
 
-Bij succes:
+On success:
 ```json
-{"message":"Clip opgenomen en verzending gestart"}
+{"message":"Clip recorded and sending started"}
 ```
 
-Bij fouten ontvang je een HTTP-foutcode met een beschrijving.
+On errors, you will receive an HTTP error code with a description.
 
-## Opmerkingen
+## Notes
 
-- De clip wordt lokaal opgeslagen in de `clips`-directory en na verzending verwijderd.
-- Er wordt geen database gebruikt; de app is volledig stateless.
-- De app is geoptimaliseerd voor snelheid en gebruikt een minimale Go-binary met FFmpeg.
-- Voor maximale prestaties wordt de clip asynchroon verzonden naar Telegram.
+- The clip is stored locally in the `clips` directory and deleted after sending.
+- No database is used; the app is completely stateless.
+- The app is optimized for speed and uses a minimal Go binary with FFmpeg.
+- For maximum performance, the clip is sent asynchronously to the messaging service.
+- When compressed, the app preserves the original aspect ratio of the video.
 
-## Probleemoplossing
+## Troubleshooting
 
-- **FFmpeg-fouten**: Zorg ervoor dat de `camera_ip` correct is en dat de RTSP-stream toegankelijk is.
-- **Telegram-fouten**: Controleer of de `bot_token` en `chat_id` correct zijn.
-- **Logs**: Bekijk de Docker-logs voor meer informatie:
+- **FFmpeg errors**: Make sure the `camera_ip` is correct and the RTSP stream is accessible.
+- **Telegram errors**: Check if the `bot_token` and `chat_id` are correct.
+- **Mattermost errors**: Check if the `mattermost_url`, `mattermost_token`, and `mattermost_channel` are correct.
+- **Logs**: View the Docker logs for more information:
   ```bash
   docker-compose logs
   ```
