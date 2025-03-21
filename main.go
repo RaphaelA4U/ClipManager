@@ -51,7 +51,7 @@ func main() {
 	http.HandleFunc("/api/clip", handleClipRequest)
 
 	// Log startup message
-	log.Printf("ClipManager started! Make a GET/POST request to localhost:%s/api/clip with parameters: camera_ip, chat_app, bot_token, chat_id, backtrack_seconds, duration_seconds", port)
+	log.Printf("ClipManager started! Make a GET/POST request to localhost:%s/api/clip", port)
 
 	// Start the server
 	log.Fatal(http.ListenAndServe(":"+port, nil))

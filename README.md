@@ -33,7 +33,7 @@ WARNING: BACKTRACKING NOT IMPLEMENTED CORRECTLY YET!!!
 
 4. **Check the logs**: At startup, you will see a message like:
    ```
-   ClipManager started! Make a GET/POST request to localhost:8080/api/clip with parameters: camera_ip, chat_app, bot_token, chat_id, backtrack_seconds, duration_seconds
+   ClipManager started! Make a GET/POST request to localhost:8080/api/clip
    ```
 
 ## Usage
