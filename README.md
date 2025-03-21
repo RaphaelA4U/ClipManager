@@ -2,6 +2,8 @@
 
 A simple, fast and lightweight application to record clips from an RTSP camera and send them to Telegram or Mattermost.
 
+WARNING: BACKTRACKING NOT IMPLEMENTED CORRECTLY YET!!!
+
 ## Requirements
 - Docker and Docker Compose
 - An RTSP camera (e.g. `rtsp://username:password@camera-ip:port/path`)
