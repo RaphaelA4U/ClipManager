@@ -341,79 +341,129 @@ func getFileSize(filePath string) int64 {
 
 // Function to send to Mattermost
 func sendToMattermost(filePath, mattermostURL, token, channelID string) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		log.Printf("Could not open file for sending to Mattermost: %v", err)
-		return
-	}
-	defer file.Close()
+    file, err := os.Open(filePath)
+    if err != nil {
+        log.Printf("Could not open file for sending to Mattermost: %v", err)
+        return
+    }
+    defer file.Close()
 
-	// Generate timestamp message
-	messageText := fmt.Sprintf("New Clip: %s", formatCurrentTime())
+    // Create a multipart form for the file upload
+    var requestBody bytes.Buffer
+    writer := multipart.NewWriter(&requestBody)
+    
+    // Add the channel ID
+    if err := writer.WriteField("channel_id", channelID); err != nil {
+        log.Printf("Could not add channel_id to request: %v", err)
+        return
+    }
+    
+    // Add the file
+    part, err := writer.CreateFormFile("files", filepath.Base(filePath))
+    if err != nil {
+        log.Printf("Could not create file field: %v", err)
+        return
+    }
+    
+    if _, err := io.Copy(part, file); err != nil {
+        log.Printf("Could not copy file to request: %v", err)
+        return
+    }
+    
+    // Close the writer
+    if err := writer.Close(); err != nil {
+        log.Printf("Could not close multipart writer: %v", err)
+        return
+    }
 
-	// Create a multipart form for the file
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-	
-	// Add the channel ID
-	if err := writer.WriteField("channel_id", channelID); err != nil {
-		log.Printf("Could not add channel_id to request: %v", err)
-		return
-	}
-	
-	// Add message text with timestamp
-	if err := writer.WriteField("message", messageText); err != nil {
-		log.Printf("Could not add message to request: %v", err)
-		return
-	}
-	
-	// Add the file
-	part, err := writer.CreateFormFile("files", filepath.Base(filePath))
-	if err != nil {
-		log.Printf("Could not create file field: %v", err)
-		return
-	}
-	
-	if _, err := io.Copy(part, file); err != nil {
-		log.Printf("Could not copy file to request: %v", err)
-		return
-	}
-	
-	// Close the writer
-	if err := writer.Close(); err != nil {
-		log.Printf("Could not close multipart writer: %v", err)
-		return
-	}
-
-	// Create an HTTP POST request
-	reqURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
-	req, err := http.NewRequest("POST", reqURL, &requestBody)
-	if err != nil {
-		log.Printf("Could not create Mattermost request: %v", err)
-		return
-	}
-	
-	// Set the headers
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+token)
-	
-	// Execute the request
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("Error when sending to Mattermost: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-	
-	// Check the response
-	if resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		log.Printf("Mattermost API error: %s - %s", resp.Status, string(bodyBytes))
-		return
-	}
-	
-	log.Printf("Clip successfully sent to Mattermost")
+    // First, upload the file
+    fileUploadURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
+    log.Printf("Uploading file to Mattermost: %s", fileUploadURL)
+    
+    req, err := http.NewRequest("POST", fileUploadURL, &requestBody)
+    if err != nil {
+        log.Printf("Could not create Mattermost file upload request: %v", err)
+        return
+    }
+    
+    req.Header.Set("Content-Type", writer.FormDataContentType())
+    req.Header.Set("Authorization", "Bearer "+token)
+    
+    client := &http.Client{Timeout: 60 * time.Second}
+    resp, err := client.Do(req)
+    if err != nil {
+        log.Printf("Error when uploading to Mattermost: %v", err)
+        return
+    }
+    defer resp.Body.Close()
+    
+    // Handle file upload response
+    if resp.StatusCode >= 300 {
+        bodyBytes, _ := io.ReadAll(resp.Body)
+        log.Printf("Mattermost file upload error: %s - %s", resp.Status, string(bodyBytes))
+        return
+    }
+    
+    // Parse the response to get file IDs
+    var fileResponse struct {
+        FileInfos []struct {
+            ID string `json:"id"`
+        } `json:"file_infos"`
+    }
+    
+    if err := json.NewDecoder(resp.Body).Decode(&fileResponse); err != nil {
+        log.Printf("Error parsing Mattermost response: %v", err)
+        return
+    }
+    
+    if len(fileResponse.FileInfos) == 0 {
+        log.Printf("No file IDs returned from Mattermost")
+        return
+    }
+    
+    // Now create a post with the uploaded file
+    fileIDs := make([]string, len(fileResponse.FileInfos))
+    for i, fileInfo := range fileResponse.FileInfos {
+        fileIDs[i] = fileInfo.ID
+    }
+    
+    postData := map[string]interface{}{
+        "channel_id": channelID,
+        "message":    fmt.Sprintf("New Clip: %s", formatCurrentTime()),
+        "file_ids":   fileIDs,
+    }
+    
+    postJSON, err := json.Marshal(postData)
+    if err != nil {
+        log.Printf("Error creating post JSON: %v", err)
+        return
+    }
+    
+    // Create the post
+    postURL := fmt.Sprintf("%s/api/v4/posts", mattermostURL)
+    postReq, err := http.NewRequest("POST", postURL, bytes.NewBuffer(postJSON))
+    if err != nil {
+        log.Printf("Could not create post request: %v", err)
+        return
+    }
+    
+    postReq.Header.Set("Content-Type", "application/json")
+    postReq.Header.Set("Authorization", "Bearer "+token)
+    
+    postResp, err := client.Do(postReq)
+    if err != nil {
+        log.Printf("Error creating post: %v", err)
+        return
+    }
+    defer postResp.Body.Close()
+    
+    if postResp.StatusCode >= 300 {
+        bodyBytes, _ := io.ReadAll(postResp.Body)
+        log.Printf("Mattermost post creation error: %s - %s", postResp.Status, string(bodyBytes))
+        return
+    }
+    
+    log.Printf("Clip successfully sent to Mattermost")
 }
 
 // Helper to create multipart form data
