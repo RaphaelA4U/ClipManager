@@ -41,10 +41,10 @@ func main() {
 		log.Println("No .env file found, using default values")
 	}
 
-	// Get port from .env, default is 8080
+	// Get port from .env, default is 5000
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "5000"
 	}
 
 	// Set up HTTP server

@@ -16,14 +16,14 @@ WARNING: BACKTRACKING NOT IMPLEMENTED CORRECTLY YET!!!
    cd clipmanager
    ```
 
-2. **Configure the port (optional)**: Copy `.env.example` to `.env` and set the port (default 8080):
+2. **Configure the port (optional)**: Copy `.env.example` to `.env` and set the port (default 5000):
    ```bash
    cp .env.example .env
    ```
    
    Edit `.env` if needed:
    ```
-   PORT=8080
+   PORT=5000
    ```
 
 3. **Start the application**:
@@ -33,12 +33,12 @@ WARNING: BACKTRACKING NOT IMPLEMENTED CORRECTLY YET!!!
 
 4. **Check the logs**: At startup, you will see a message like:
    ```
-   ClipManager started! Make a GET/POST request to localhost:8080/api/clip
+   ClipManager started! Make a GET/POST request to localhost:5000/api/clip
    ```
 
 ## Usage
 
-Make a GET or POST request to `localhost:8080/api/clip` with the following parameters:
+Make a GET or POST request to `localhost:5000/api/clip` with the following parameters:
 
 ### Common Parameters
 | Parameter | Description | Example | Required |
@@ -63,22 +63,22 @@ Make a GET or POST request to `localhost:8080/api/clip` with the following param
 
 ### GET example (Telegram):
 ```bash
-curl "localhost:8080/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=telegram&bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&chat_id=-100123456789&backtrack_seconds=10&duration_seconds=10"
+curl "localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=telegram&bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&chat_id=-100123456789&backtrack_seconds=10&duration_seconds=10"
 ```
 
 ### GET example (Mattermost):
 ```bash
-curl "localhost:8080/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn&backtrack_seconds=10&duration_seconds=10"
+curl "localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn&backtrack_seconds=10&duration_seconds=10"
 ```
 
 ### POST example (Telegram):
 ```bash
-curl -X POST localhost:8080/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"telegram","bot_token":"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ","chat_id":"-100123456789","backtrack_seconds":10,"duration_seconds":10}'
+curl -X POST localhost:5000/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"telegram","bot_token":"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ","chat_id":"-100123456789","backtrack_seconds":10,"duration_seconds":10}'
 ```
 
 ### POST example (Mattermost):
 ```bash
-curl -X POST localhost:8080/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"mattermost","mattermost_url":"https://mattermost.example.com","mattermost_token":"abcdefghijklmnopqrstuvwxyz","mattermost_channel":"123456789abcdefghijklmn","backtrack_seconds":10,"duration_seconds":10}'
+curl -X POST localhost:5000/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"mattermost","mattermost_url":"https://mattermost.example.com","mattermost_token":"abcdefghijklmnopqrstuvwxyz","mattermost_channel":"123456789abcdefghijklmn","backtrack_seconds":10,"duration_seconds":10}'
 ```
 
 ### Response

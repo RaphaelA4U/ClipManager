@@ -34,6 +34,6 @@ RUN mkdir -p /app/clips
 COPY --from=builder /app/clipmanager .
 
 # Expose port
-EXPOSE 8080
+EXPOSE 5000
 
 CMD ["./clipmanager"]

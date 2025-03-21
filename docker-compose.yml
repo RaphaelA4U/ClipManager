@@ -2,8 +2,8 @@ services:
   clipmanager:
     build: .
     ports:
-      - "8080:8080"
+      - "5000:5000"
     volumes:
       - ./clips:/app/clips
     environment:
-      - PORT=8080
+      - PORT=5000
