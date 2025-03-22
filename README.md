@@ -28,7 +28,7 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
 
 ## Docker Port Configuration
 
-The ClipManager uses port 5000 inside the container, but you can map it to any port on your host machine.
+The ClipManager uses port 5000 inside the container, but you can map it to any port on your host machine. By default, it's mapped to port 5001.
 
 ### Understanding Port Mapping in Docker
 

@@ -36,6 +36,6 @@ COPY --from=builder /app/clipmanager .
 EXPOSE 5000
 
 # The HOST_PORT is only for logging; the actual port mapping is handled by Docker
-ENV HOST_PORT=5000
+ENV HOST_PORT=5001
 
 CMD ["./clipmanager"]

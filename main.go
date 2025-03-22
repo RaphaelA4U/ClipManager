@@ -86,7 +86,7 @@ func getHostPort(defaultPort string) string {
 	if hostPort != "" {
 		return hostPort
 	}
-	return defaultPort
+	return "5001" // Changed from defaultPort to "5001"
 }
 
 // checkIfRunningInDocker checks if the application is running inside a Docker container
