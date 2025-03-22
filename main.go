@@ -43,45 +43,54 @@ type ClipResponse struct {
 }
 
 func main() {
-	// Check if running in Docker environment
-	isDocker := checkIfRunningInDocker()
+	// Simple starting message
+	log.Println("Starting ClipManager...")
 	
-	// Simple port configuration - use environment variable or default to 5000
-	port := getPort()
+	// Get internal port (what the app listens on)
+	containerPort := getPort()
 	
-	// Log Docker detection if applicable
-	if isDocker {
-		log.Printf("Detected running in Docker environment (container port: %s)", port)
-		log.Println("Note: To change the host port, modify the first number in the ports section of docker-compose.yml")
-	}
+	// Get external port (what users connect to)
+	hostPort := getHostPort(containerPort)
+	
+	// Use the host port for all user-facing URLs
+	accessPort := hostPort
 	
 	// Set up HTTP server
 	http.HandleFunc("/api/clip", handleClipRequest)
 
-	// Log startup message with example request
-	log.Printf("ClipManager started on port %s!", port)
-	log.Printf("Example request: http://localhost:%s/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID", port)
+	// Simple startup success message
+	log.Println("ClipManager is running!")
 	
-	// Start the server
-	log.Printf("Server listening on port %s... (To change the port, set the PORT environment variable)", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	// Clear access information with example
+	log.Printf("Access the application at: http://localhost:%s/api/clip", accessPort)
+	log.Printf("Example request: http://localhost:%s/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID", accessPort)
+	
+	// Start the server (no additional messaging needed here)
+	log.Fatal(http.ListenAndServe(":"+containerPort, nil))
 }
 
 // getPort gets the PORT value from environment variable or returns the default
+// Simplified to reduce unnecessary logging
 func getPort() string {
-	// Check environment variable
 	envPort := os.Getenv("PORT")
 	if envPort != "" {
-		log.Printf("Using PORT=%s from environment variable", envPort)
 		return envPort
 	}
-	
-	// No PORT found, use default
-	log.Println("No PORT specified in environment, using default port 5000")
 	return "5000"
 }
 
+// getHostPort determines the external port that users should connect to
+// Simplified to reduce unnecessary logging
+func getHostPort(defaultPort string) string {
+	hostPort := os.Getenv("HOST_PORT")
+	if hostPort != "" {
+		return hostPort
+	}
+	return defaultPort
+}
+
 // checkIfRunningInDocker checks if the application is running inside a Docker container
+// Function kept for backend logic but we'll minimize logging of this information
 func checkIfRunningInDocker() bool {
 	// Method 1: Check for /.dockerenv file
 	if _, err := os.Stat("/.dockerenv"); err == nil {
@@ -91,6 +100,11 @@ func checkIfRunningInDocker() bool {
 	// Method 2: Check for docker in cgroup
 	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
 		return bytes.Contains(data, []byte("docker"))
+	}
+	
+	// Method 3: Check for PORT and HOST_PORT environment variables
+	if os.Getenv("PORT") != "" && os.Getenv("HOST_PORT") != "" {
+		return true
 	}
 	
 	return false

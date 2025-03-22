@@ -24,15 +24,30 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
    ```
 
 3. **Access the application**:
-   By default, the application will be available at `http://localhost:5000`
+   By default, the application will be available at `http://localhost:5001`
 
 ## Docker Port Configuration
 
-The ClipManager uses port 5000 by default inside the container, but you can map it to any port on your host machine.
+The ClipManager uses port 5000 inside the container, but you can map it to any port on your host machine.
+
+### Understanding Port Mapping in Docker
+
+In the `docker-compose.yml` file, the port mapping follows this format:
+```
+"HOST_PORT:CONTAINER_PORT"
+```
+
+For example, with `"5001:5000"`:
+- `5000` - Internal container port (the app listens on this port inside Docker)
+- `5001` - Host port (you'll access the app on this port from your browser)
+
+This means you would access the application at `http://localhost:5001`.
 
 ### Changing the Host Port
 
-To change the port that's accessible on your host machine, modify the first number in the port mapping in `docker-compose.yml`:
+To change the port that's accessible on your host machine, modify both:
+1. The first number in the `ports` mapping
+2. The `HOST_PORT` environment variable to match
 
 ```yml
 services:
@@ -40,25 +55,35 @@ services:
     # ...
     ports:
       - "8080:5000"  # Maps host port 8080 to container port 5000
+    environment:
+      - PORT=5000
+      - HOST_PORT=8080  # Update this to match the first number in ports
 ```
 
 With this configuration:
-- The application will still listen on port 5000 inside the container
+- The application will listen on port 5000 inside the container
 - You'll access it from your host machine at `http://localhost:8080`
+- The application logs will show the correct access URLs with port 8080
 
 ### Example Port Configurations
 
-1. **Default configuration** - access on port 5000:
+1. **Default configuration** - access on port 5001:
    ```yml
    ports:
-     - "5000:5000"
+     - "5001:5000"
+   environment:
+     - PORT=5000
+     - HOST_PORT=5001
    ```
-   Access the application at: `http://localhost:5000/api/clip`
+   Access the application at: `http://localhost:5001/api/clip`
 
-2. **Alternative port 8080** - useful if port 5000 is already in use:
+2. **Alternative port 8080** - useful if port 5001 is already in use:
    ```yml
    ports:
      - "8080:5000"
+   environment:
+     - PORT=5000
+     - HOST_PORT=8080
    ```
    Access the application at: `http://localhost:8080/api/clip`
 
@@ -67,10 +92,16 @@ With this configuration:
    # First instance in docker-compose.yml
    ports:
      - "8081:5000"
+   environment:
+     - PORT=5000
+     - HOST_PORT=8081
    
    # Second instance in another docker-compose file
    ports:
      - "8082:5000"
+   environment:
+     - PORT=5000
+     - HOST_PORT=8082
    ```
 
 ### Starting with a Custom Port
@@ -92,7 +123,7 @@ Make a GET or POST request to the application with the following parameters:
 ### Example Request URL
 
 ```
-http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID
+http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID
 ```
 
 Remember to replace the host port in the URL if you've changed it in your docker-compose.yml.
@@ -133,12 +164,12 @@ Remember to replace the host port in the URL if you've changed it in your docker
 
 **GET Request**:
 ```bash
-curl "http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789"
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789"
 ```
 
 **POST Request**:
 ```bash
-curl -X POST http://localhost:5000/api/clip \
+curl -X POST http://localhost:5001/api/clip \
   -H "Content-Type: application/json" \
   -d '{
     "camera_ip": "rtsp://username:password@camera-ip:port/path",
@@ -154,14 +185,14 @@ curl -X POST http://localhost:5000/api/clip \
 
 **GET Request**:
 ```bash
-curl "http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn"
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn"
 ```
 
 #### Discord
 
 **GET Request**:
 ```bash
-curl "http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=discord&discord_webhook_url=https://discord.com/api/webhooks/id/token"
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=discord&discord_webhook_url=https://discord.com/api/webhooks/id/token"
 ```
 
 ### Response

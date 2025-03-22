@@ -12,7 +12,6 @@ COPY . .
 # Initialize a fresh Go module
 RUN rm -f go.mod go.sum
 RUN go mod init github.com/RaphaelA4U/ClipManager
-RUN go get github.com/joho/godotenv@v1.5.1
 RUN go get github.com/u2takey/ffmpeg-go@v0.5.0
 RUN go mod tidy
 
@@ -33,7 +32,10 @@ RUN mkdir -p /app/clips
 # Copy the binary
 COPY --from=builder /app/clipmanager .
 
-# Expose port 5000 - this is the default port
+# Expose port 5000 - this is the default internal port
 EXPOSE 5000
+
+# The HOST_PORT is only for logging; the actual port mapping is handled by Docker
+ENV HOST_PORT=5000
 
 CMD ["./clipmanager"]

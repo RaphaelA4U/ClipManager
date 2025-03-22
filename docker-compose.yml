@@ -12,9 +12,12 @@ services:
     volumes:
       - ./clips:/app/clips
     environment:
-      # This sets the PORT environment variable inside the container
+      # PORT sets the internal container port the application listens on
       # Should match the second number in the ports mapping above
       - PORT=5000
+      # HOST_PORT represents the external port users connect to from their host machine
+      # Should match the first number in the ports mapping above
+      - HOST_PORT=5000
     # Uncomment and modify these lines for additional configuration if needed
     # restart: always
     # deploy:
