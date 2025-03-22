@@ -2,8 +2,23 @@ services:
   clipmanager:
     build: .
     ports:
-      - "5001:8080"
+      # PORT MAPPING: "host_port:container_port"
+      # The application listens on port 5000 inside the container
+      # Change the first number (e.g., "8080:5000") to map to a different port on your host
+      # For example:
+      # - "8080:5000" → Access the app via http://localhost:8080
+      # - "9000:5000" → Access the app via http://localhost:9000
+      - "5000:5000"
     volumes:
       - ./clips:/app/clips
     environment:
-      - PORT=8080
+      # This sets the PORT environment variable inside the container
+      # Should match the second number in the ports mapping above
+      - PORT=5000
+    # Uncomment and modify these lines for additional configuration if needed
+    # restart: always
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '1'
+    #       memory: 1G

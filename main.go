@@ -14,21 +14,28 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 type ClipRequest struct {
+	// Common parameters (ordered logically)
 	CameraIP         string `json:"camera_ip"`
-	ChatApp          string `json:"chat_app"`
-	BotToken         string `json:"telegram_bot_token"` // For Telegram
-	ChatID           string `json:"telegram_chat_id"`   // For Telegram
-	MattermostURL    string `json:"mattermost_url"`     // For Mattermost (e.g. https://mattermost.example.com)
-	MattermostToken  string `json:"mattermost_token"`  	// For Mattermost API token
-	MattermostChannel string `json:"mattermost_channel"`// For Mattermost channel ID
-	DiscordWebhookURL string `json:"discord_webhook_url"` // For Discord
 	BacktrackSeconds int    `json:"backtrack_seconds"`
 	DurationSeconds  int    `json:"duration_seconds"`
+	ChatApp          string `json:"chat_app"`
+	
+	// Chat app specific parameters
+	// Telegram parameters
+	TelegramBotToken string `json:"telegram_bot_token"`
+	TelegramChatID   string `json:"telegram_chat_id"`
+	
+	// Mattermost parameters
+	MattermostURL     string `json:"mattermost_url"`     // e.g. https://mattermost.example.com
+	MattermostToken   string `json:"mattermost_token"`   
+	MattermostChannel string `json:"mattermost_channel"` 
+	
+	// Discord parameters
+	DiscordWebhookURL string `json:"discord_webhook_url"`
 }
 
 type ClipResponse struct {
@@ -36,26 +43,57 @@ type ClipResponse struct {
 }
 
 func main() {
-	// Load .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("No .env file found, using default values")
+	// Check if running in Docker environment
+	isDocker := checkIfRunningInDocker()
+	
+	// Simple port configuration - use environment variable or default to 5000
+	port := getPort()
+	
+	// Log Docker detection if applicable
+	if isDocker {
+		log.Printf("Detected running in Docker environment (container port: %s)", port)
+		log.Println("Note: To change the host port, modify the first number in the ports section of docker-compose.yml")
 	}
-
-	// Get port from .env, default is 5000
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "5000"
-	}
-
+	
 	// Set up HTTP server
 	http.HandleFunc("/api/clip", handleClipRequest)
 
-	// Log startup message
-	log.Printf("ClipManager started! Make a GET/POST request to localhost:%s/api/clip", port)
-
+	// Log startup message with example request
+	log.Printf("ClipManager started on port %s!", port)
+	log.Printf("Example request: http://localhost:%s/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID", port)
+	
 	// Start the server
+	log.Printf("Server listening on port %s... (To change the port, set the PORT environment variable)", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+// getPort gets the PORT value from environment variable or returns the default
+func getPort() string {
+	// Check environment variable
+	envPort := os.Getenv("PORT")
+	if envPort != "" {
+		log.Printf("Using PORT=%s from environment variable", envPort)
+		return envPort
+	}
+	
+	// No PORT found, use default
+	log.Println("No PORT specified in environment, using default port 5000")
+	return "5000"
+}
+
+// checkIfRunningInDocker checks if the application is running inside a Docker container
+func checkIfRunningInDocker() bool {
+	// Method 1: Check for /.dockerenv file
+	if _, err := os.Stat("/.dockerenv"); err == nil {
+		return true
+	}
+	
+	// Method 2: Check for docker in cgroup
+	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
+		return bytes.Contains(data, []byte("docker"))
+	}
+	
+	return false
 }
 
 func handleClipRequest(w http.ResponseWriter, r *http.Request) {
@@ -63,17 +101,21 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 	var req ClipRequest
 
 	if r.Method == http.MethodGet {
-		// Parse query parameters for GET
+		// Parse query parameters for GET (in logical order)
 		req.CameraIP = r.URL.Query().Get("camera_ip")
-		req.ChatApp = r.URL.Query().Get("chat_app")
-		req.BotToken = r.URL.Query().Get("telegram_bot_token")
-		req.ChatID = r.URL.Query().Get("telegram_chat_id")
+		backtrackSeconds := r.URL.Query().Get("backtrack_seconds")
+		durationSeconds := r.URL.Query().Get("duration_seconds")
+		req.ChatApp = strings.ToLower(r.URL.Query().Get("chat_app"))
+		
+		// Chat app specific parameters
+		req.TelegramBotToken = r.URL.Query().Get("telegram_bot_token")
+		req.TelegramChatID = r.URL.Query().Get("telegram_chat_id")
 		req.MattermostURL = r.URL.Query().Get("mattermost_url")
 		req.MattermostToken = r.URL.Query().Get("mattermost_token")
 		req.MattermostChannel = r.URL.Query().Get("mattermost_channel")
-		backtrackSeconds := r.URL.Query().Get("backtrack_seconds")
-		durationSeconds := r.URL.Query().Get("duration_seconds")
+		req.DiscordWebhookURL = r.URL.Query().Get("discord_webhook_url")
 
+		// Parse numeric parameters
 		if backtrackSeconds != "" {
 			fmt.Sscanf(backtrackSeconds, "%d", &req.BacktrackSeconds)
 		}
@@ -83,57 +125,88 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		// Parse JSON body for POST
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid JSON body", http.StatusBadRequest)
+			http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Standardize chat app to lowercase
+		req.ChatApp = strings.ToLower(req.ChatApp)
 	} else {
 		http.Error(w, "Method not allowed, use GET or POST", http.StatusMethodNotAllowed)
 		return
 	}
 
 	// Validate common parameters
-	if req.CameraIP == "" || req.ChatApp == "" {
-		http.Error(w, "Missing parameters: camera_ip and chat_app are required", http.StatusBadRequest)
+	if req.CameraIP == "" {
+		http.Error(w, "Missing required parameter: camera_ip", http.StatusBadRequest)
 		return
 	}
+	
+	if req.ChatApp == "" {
+		http.Error(w, "Missing required parameter: chat_app", http.StatusBadRequest)
+		return
+	}
+	
+	if req.BacktrackSeconds <= 0 {
+		http.Error(w, "Invalid or missing parameter: backtrack_seconds must be greater than 0", http.StatusBadRequest)
+		return
+	}
+	
+	if req.DurationSeconds <= 0 {
+		http.Error(w, "Invalid or missing parameter: duration_seconds must be greater than 0", http.StatusBadRequest)
+		return
+	}
+	
 	if req.BacktrackSeconds < 5 || req.BacktrackSeconds > 300 {
-		http.Error(w, "backtrack_seconds must be between 5 and 300", http.StatusBadRequest)
+		http.Error(w, "Invalid parameter: backtrack_seconds must be between 5 and 300", http.StatusBadRequest)
 		return
 	}
+	
 	if req.DurationSeconds < 5 || req.DurationSeconds > 300 {
-		http.Error(w, "duration_seconds must be between 5 and 300", http.StatusBadRequest)
+		http.Error(w, "Invalid parameter: duration_seconds must be between 5 and 300", http.StatusBadRequest)
 		return
 	}
 
 	// Chat app-specific validation
-	req.ChatApp = strings.ToLower(req.ChatApp)
 	switch req.ChatApp {
 	case "telegram":
-		if req.BotToken == "" || req.ChatID == "" {
-			http.Error(w, "For Telegram, telegram_bot_token and telegram_chat_id are required", http.StatusBadRequest)
+		if req.TelegramBotToken == "" {
+			http.Error(w, "Missing required parameter for Telegram: telegram_bot_token", http.StatusBadRequest)
+			return
+		}
+		if req.TelegramChatID == "" {
+			http.Error(w, "Missing required parameter for Telegram: telegram_chat_id", http.StatusBadRequest)
 			return
 		}
 	case "mattermost":
-		if req.MattermostURL == "" || req.MattermostToken == "" || req.MattermostChannel == "" {
-			http.Error(w, "For Mattermost, mattermost_url, mattermost_token and mattermost_channel are required", http.StatusBadRequest)
+		if req.MattermostURL == "" {
+			http.Error(w, "Missing required parameter for Mattermost: mattermost_url", http.StatusBadRequest)
+			return
+		}
+		if req.MattermostToken == "" {
+			http.Error(w, "Missing required parameter for Mattermost: mattermost_token", http.StatusBadRequest)
+			return
+		}
+		if req.MattermostChannel == "" {
+			http.Error(w, "Missing required parameter for Mattermost: mattermost_channel", http.StatusBadRequest)
 			return
 		}
 		// Make sure MattermostURL has no trailing slash
 		req.MattermostURL = strings.TrimSuffix(req.MattermostURL, "/")
 	case "discord":
 		if req.DiscordWebhookURL == "" {
-			http.Error(w, "For Discord, discord_webhook_url is required", http.StatusBadRequest)
+			http.Error(w, "Missing required parameter for Discord: discord_webhook_url", http.StatusBadRequest)
 			return
 		}
 	default:
-		http.Error(w, "Only 'telegram', 'mattermost', and 'discord' are supported as chat_app", http.StatusBadRequest)
+		http.Error(w, "Invalid chat_app parameter. Supported values are: 'telegram', 'mattermost', or 'discord'", http.StatusBadRequest)
 		return
 	}
 
 	// Create a temporary directory for the clip
 	tempDir := "clips"
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		http.Error(w, "Could not create temporary directory", http.StatusInternalServerError)
+		log.Printf("Failed to create directory %s: %v", tempDir, err)
+		http.Error(w, "Server error: could not create temporary directory", http.StatusInternalServerError)
 		return
 	}
 
@@ -163,65 +236,66 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
     err := ffmpegCmd.Run()
     if err != nil {
         log.Printf("FFmpeg error: %v", err)
-        http.Error(w, "Could not record the clip", http.StatusInternalServerError)
+        http.Error(w, "Could not record the clip: RTSP stream may be unavailable or invalid", http.StatusInternalServerError)
         return
     }
 
 	// Check if the file exists and is not too small
 	fileInfo, err := os.Stat(filePath)
-	if err != nil || fileInfo.Size() < 1024 {
+	if err != nil {
+		log.Printf("File stat error: %v", err)
+		http.Error(w, "Could not access the recorded clip file", http.StatusInternalServerError)
+		return
+	}
+	
+	if fileInfo.Size() < 1024 {
 		os.Remove(filePath) // Remove the file in case of error
-		http.Error(w, "Could not record the clip, file too small", http.StatusInternalServerError)
+		http.Error(w, "Recorded clip is too small, possibly no valid data received from the camera", http.StatusInternalServerError)
 		return
 	}
 
 	// Check file size and compress only if > 50MB
 	finalFilePath := filePath
-	fileInfo, err = os.Stat(filePath)
-	if err != nil {
-		log.Printf("Could not get file information: %v", err)
-		http.Error(w, "Could not process the clip", http.StatusInternalServerError)
-		return
+	fileSizeMB := float64(fileInfo.Size()) / 1024 / 1024
+	log.Printf("Original file size: %.2f MB", fileSizeMB)
+    
+	if fileInfo.Size() > 50*1024*1024 { // 50MB in bytes
+		log.Printf("File is larger than 50MB (%.2f MB), applying compression", fileSizeMB)
+        
+		// Compress to 1920x1080 while maintaining aspect ratio
+		compressCmd := ffmpeg.Input(filePath).
+			Output(compressedFilePath, ffmpeg.KwArgs{
+				"vf":       "scale=1920:-2",  // Scale to 1920px width, auto height to preserve aspect ratio
+				"c:v":      "libx264",
+				"preset":   "medium",  // Better quality than "ultrafast"
+				"crf":      "23",      // Good quality (lower = better quality)
+				"c:a":      "aac",
+				"b:a":      "128k",
+				"movflags": "+faststart",
+			}). 
+			OverWriteOutput()
+            
+		log.Printf("Compression command: %s", compressCmd.String())
+        
+		err = compressCmd.Run()
+		if err != nil {
+			log.Printf("Compression error: %v, using original file", err)
+		} else {
+			// Check compressed file size
+			compressedInfo, err := os.Stat(compressedFilePath)
+			if err == nil {
+				compressedSizeMB := float64(compressedInfo.Size()) / 1024 / 1024
+				log.Printf("Compressed file size: %.2f MB (%.1f%% of original)", 
+					compressedSizeMB, (compressedSizeMB/fileSizeMB)*100)
+				
+				// Use the compressed file and remove the original
+				os.Remove(filePath)
+				finalFilePath = compressedFilePath
+			} else {
+				log.Printf("Error checking compressed file: %v, falling back to original", err)
+			}
+		}
 	}
-    
-    fileSizeMB := float64(fileInfo.Size()) / 1024 / 1024
-    log.Printf("Original file size: %.2f MB", fileSizeMB)
-    
-    if fileInfo.Size() > 50*1024*1024 { // 50MB in bytes
-        log.Printf("File is larger than 50MB (%.2f MB), applying compression", fileSizeMB)
-        
-        // Compress to 1920x1080 while maintaining aspect ratio
-        compressCmd := ffmpeg.Input(filePath).
-            Output(compressedFilePath, ffmpeg.KwArgs{
-                "vf":       "scale=1920:-2",  // Scale to 1920px width, auto height to preserve aspect ratio
-                "c:v":      "libx264",
-                "preset":   "medium",  // Better quality than "ultrafast"
-                "crf":      "23",      // Good quality (lower = better quality)
-                "c:a":      "aac",
-                "b:a":      "128k",
-                "movflags": "+faststart",
-            }). 
-            OverWriteOutput()
-            
-        log.Printf("Compression command: %s", compressCmd.String())
-        
-        err = compressCmd.Run()
-        if err != nil {
-            log.Printf("Compression error: %v, using original file", err)
-        } else {
-            // Check compressed file size
-            compressedInfo, err := os.Stat(compressedFilePath)
-            if err == nil {
-                compressedSizeMB := float64(compressedInfo.Size()) / 1024 / 1024
-                log.Printf("Compressed file size: %.2f MB (%.1f%% of original)", 
-                    compressedSizeMB, (compressedSizeMB/fileSizeMB)*100)
-            }
-            
-            // Use the compressed file and remove the original
-            os.Remove(filePath)
-            finalFilePath = compressedFilePath
-        }
-    }
 
 	// Send the clip to the chosen chat app (asynchronously)
 	go func() {
@@ -229,7 +303,7 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 
 		switch req.ChatApp {
 		case "telegram":
-			sendToTelegram(finalFilePath, req.BotToken, req.ChatID)
+			sendToTelegram(finalFilePath, req.TelegramBotToken, req.TelegramChatID)
 		case "mattermost":
 			sendToMattermost(finalFilePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel)
 		case "discord":
@@ -278,9 +352,9 @@ func sendToTelegram(filePath, botToken, chatID string) {
     var requestBody bytes.Buffer
     writer := multipart.NewWriter(&requestBody)
     
-    // Add the telegram_chat_id field
-    if err := writer.WriteField("telegram_chat_id", chatID); err != nil {
-        log.Printf("Could not add telegram_chat_id to request: %v", err)
+    // Add the chat_id field (using correct parameter name)
+    if err := writer.WriteField("chat_id", chatID); err != nil {
+        log.Printf("Could not add chat_id to request: %v", err)
         return
     }
     

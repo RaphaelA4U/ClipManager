@@ -33,7 +33,7 @@ RUN mkdir -p /app/clips
 # Copy the binary
 COPY --from=builder /app/clipmanager .
 
-# Expose port
+# Expose port 5000 - this is the default port
 EXPOSE 5000
 
 CMD ["./clipmanager"]

@@ -1,84 +1,167 @@
 # ClipManager
 
-A simple, fast and lightweight application to record clips from an RTSP camera and send them to Telegram or Mattermost.
-
-WARNING: BACKTRACKING NOT IMPLEMENTED CORRECTLY YET!!!
+A simple, fast and lightweight application to record clips from an RTSP camera and send them to Telegram, Mattermost, or Discord.
 
 ## Requirements
 - Docker and Docker Compose
 - An RTSP camera (e.g. `rtsp://username:password@camera-ip:port/path`)
-- A Telegram bot token and chat ID, or a Mattermost server with API token and channel ID
+- One of the following:
+  - A Telegram bot token and chat ID
+  - A Mattermost server with API token and channel ID
+  - A Discord webhook URL
 
-## Installation
+## Quick Start
+
 1. **Clone the repository**:
    ```bash
    git clone https://github.com/RaphaelA4U/ClipManager
    cd clipmanager
    ```
 
-2. **Configure the port (optional)**: Copy `.env.example` to `.env` and set the port (default 5000):
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit `.env` if needed:
-   ```
-   PORT=5000
-   ```
-
-3. **Start the application**:
+2. **Start the application**:
    ```bash
    docker-compose up --build
    ```
 
-4. **Check the logs**: At startup, you will see a message like:
+3. **Access the application**:
+   By default, the application will be available at `http://localhost:5000`
+
+## Docker Port Configuration
+
+The ClipManager uses port 5000 by default inside the container, but you can map it to any port on your host machine.
+
+### Changing the Host Port
+
+To change the port that's accessible on your host machine, modify the first number in the port mapping in `docker-compose.yml`:
+
+```yml
+services:
+  clipmanager:
+    # ...
+    ports:
+      - "8080:5000"  # Maps host port 8080 to container port 5000
+```
+
+With this configuration:
+- The application will still listen on port 5000 inside the container
+- You'll access it from your host machine at `http://localhost:8080`
+
+### Example Port Configurations
+
+1. **Default configuration** - access on port 5000:
+   ```yml
+   ports:
+     - "5000:5000"
    ```
-   ClipManager started! Make a GET/POST request to localhost:5000/api/clip
+   Access the application at: `http://localhost:5000/api/clip`
+
+2. **Alternative port 8080** - useful if port 5000 is already in use:
+   ```yml
+   ports:
+     - "8080:5000"
    ```
+   Access the application at: `http://localhost:8080/api/clip`
+
+3. **Using multiple instances** on different ports:
+   ```yml
+   # First instance in docker-compose.yml
+   ports:
+     - "8081:5000"
+   
+   # Second instance in another docker-compose file
+   ports:
+     - "8082:5000"
+   ```
+
+### Starting with a Custom Port
+
+After changing the port in `docker-compose.yml`, restart the application:
+
+```bash
+# To stop the current instance first
+docker-compose down
+
+# To start with the new configuration
+docker-compose up
+```
 
 ## Usage
 
-Make a GET or POST request to `localhost:5000/api/clip` with the following parameters:
+Make a GET or POST request to the application with the following parameters:
 
-### Common Parameters
+### Example Request URL
+
+```
+http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID
+```
+
+Remember to replace the host port in the URL if you've changed it in your docker-compose.yml.
+
+### Parameters (in logical order)
+
+#### Common Parameters
 | Parameter | Description | Example | Required |
 |-----------|-------------|-----------|-----------|
 | camera_ip | The RTSP URL of the camera | rtsp://username:password@camera-ip:port/path | Yes |
-| chat_app | The chat app ("telegram" or "mattermost") | telegram | Yes |
-| backtrack_seconds | Number of seconds to go back for recording | 10 | Yes |
-| duration_seconds | Duration of the clip in seconds | 10 | Yes |
+| backtrack_seconds | Number of seconds to go back for recording (5-300) | 10 | Yes |
+| duration_seconds | Duration of the clip in seconds (5-300) | 10 | Yes |
+| chat_app | The chat app ("telegram", "mattermost", or "discord") | telegram | Yes |
 
-### Telegram-specific Parameters
+#### Chat App-Specific Parameters
+
+##### Telegram Parameters
 | Parameter | Description | Example | Required for Telegram |
 |-----------|-------------|-----------|-----------|
 | telegram_bot_token | The Telegram bot token | 123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ | Yes |
 | telegram_chat_id | The Telegram chat ID | -100123456789 | Yes |
 
-### Mattermost-specific Parameters
+##### Mattermost Parameters
 | Parameter | Description | Example | Required for Mattermost |
 |-----------|-------------|-----------|-----------|
 | mattermost_url | The URL of the Mattermost server | https://mattermost.example.com | Yes |
 | mattermost_token | The Mattermost API token | abcdefghijklmnopqrstuvwxyz | Yes |
 | mattermost_channel | The Mattermost channel ID | 123456789abcdefghijklmn | Yes |
 
-### GET example (Telegram):
+##### Discord Parameters
+| Parameter | Description | Example | Required for Discord |
+|-----------|-------------|-----------|-----------|
+| discord_webhook_url | The Discord webhook URL | https://discord.com/api/webhooks/id/token | Yes |
+
+### Example Requests
+
+#### Telegram
+
+**GET Request**:
 ```bash
-curl "localhost:8080/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=telegram&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789&backtrack_seconds=10&duration_seconds=10"
+curl "http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789"
 ```
 
-### GET example (Mattermost):
+**POST Request**:
 ```bash
-curl "localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn&backtrack_seconds=10&duration_seconds=10"
+curl -X POST http://localhost:5000/api/clip \
+  -H "Content-Type: application/json" \
+  -d '{
+    "camera_ip": "rtsp://username:password@camera-ip:port/path",
+    "backtrack_seconds": 10,
+    "duration_seconds": 10,
+    "chat_app": "telegram",
+    "telegram_bot_token": "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "telegram_chat_id": "-100123456789"
+  }'
 ```
 
-### POST example (Telegram):
+#### Mattermost
+
+**GET Request**:
 ```bash
-curl -X POST localhost:8080/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"telegram","telegram_bot_token":"123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ","telegram_chat_id":"-100123456789","backtrack_seconds":10,"duration_seconds":10}'
+curl "http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn"
 ```
 
-### POST example (Mattermost):
+#### Discord
+
+**GET Request**:
 ```bash
-curl -X POST localhost:5000/api/clip -H "Content-Type: application/json" -d '{"camera_ip":"rtsp://username:password@camera-ip:port/path","chat_app":"mattermost","mattermost_url":"https://mattermost.example.com","mattermost_token":"abcdefghijklmnopqrstuvwxyz","mattermost_channel":"123456789abcdefghijklmn","backtrack_seconds":10,"duration_seconds":10}'
+curl "http://localhost:5000/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=discord&discord_webhook_url=https://discord.com/api/webhooks/id/token"
 ```
 
 ### Response
@@ -88,7 +171,7 @@ On success:
 {"message":"Clip recorded and sending started"}
 ```
 
-On errors, you will receive an HTTP error code with a description.
+On errors, you will receive an HTTP error status code with a descriptive error message.
 
 ## Notes
 
@@ -97,12 +180,37 @@ On errors, you will receive an HTTP error code with a description.
 - The app is optimized for speed and uses a minimal Go binary with FFmpeg.
 - For maximum performance, the clip is sent asynchronously to the messaging service.
 - When compressed, the app preserves the original aspect ratio of the video.
+- Videos larger than 50MB are automatically compressed to reduce file size while maintaining quality.
 
 ## Troubleshooting
+
+### Port Conflicts
+
+If you see an error like `bind: address already in use` when starting the container, port 5000 is already being used by another application on your host machine. To solve this:
+
+1. Change the host port in `docker-compose.yml`:
+   ```yml
+   ports:
+     - "8080:5000"  # Use port 8080 instead of 5000
+   ```
+
+2. Restart the application:
+   ```bash
+   docker-compose down
+   docker-compose up
+   ```
+
+3. Access the application using the new port:
+   ```
+   http://localhost:8080/api/clip
+   ```
+
+### Other Common Issues
 
 - **FFmpeg errors**: Make sure the `camera_ip` is correct and the RTSP stream is accessible.
 - **Telegram errors**: Check if the `telegram_bot_token` and `telegram_chat_id` are correct.
 - **Mattermost errors**: Check if the `mattermost_url`, `mattermost_token`, and `mattermost_channel` are correct.
+- **Discord errors**: Verify that the `discord_webhook_url` is valid and correctly formatted.
 - **Logs**: View the Docker logs for more information:
   ```bash
   docker-compose logs
