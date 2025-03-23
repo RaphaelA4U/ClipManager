@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,10 +39,19 @@ type ClipRequest struct {
 	
 	// Discord parameters
 	DiscordWebhookURL string `json:"discord_webhook_url"`
+
+	// PoolManager integration
+	PoolManagerConnection bool `json:"poolmanager_connection"`
 }
 
 type ClipResponse struct {
 	Message string `json:"message"`
+}
+
+// PoolManagerData represents data retrieved from the PoolManager API
+type PoolManagerData struct {
+	Players     []string `json:"players"`
+	MatchNumber int      `json:"match_number"`
 }
 
 // Global rate limiter - 1 request per second with a burst of 1
@@ -149,6 +159,17 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 		req.MattermostChannel = r.URL.Query().Get("mattermost_channel")
 		req.DiscordWebhookURL = r.URL.Query().Get("discord_webhook_url")
 
+		// Parse PoolManager connection parameter
+		poolManagerParam := r.URL.Query().Get("poolmanager_connection")
+		if poolManagerParam != "" {
+			var err error
+			req.PoolManagerConnection, err = strconv.ParseBool(poolManagerParam)
+			if err != nil {
+				log.Printf("Invalid poolmanager_connection parameter: %v", err)
+				req.PoolManagerConnection = false
+			}
+		}
+
 		// Parse numeric parameters
 		if backtrackSeconds != "" {
 			fmt.Sscanf(backtrackSeconds, "%d", &req.BacktrackSeconds)
@@ -234,6 +255,16 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Invalid chat_app parameter. Supported values are: 'telegram', 'mattermost', or 'discord'", http.StatusBadRequest)
 		return
+	}
+
+	// Get data from PoolManager if needed
+	var poolManagerData *PoolManagerData
+	if req.PoolManagerConnection {
+		poolManagerData = getPoolManagerData()
+		if poolManagerData != nil {
+			log.Printf("Retrieved PoolManager data: players=%v, match number=%d", 
+				poolManagerData.Players, poolManagerData.MatchNumber)
+		}
 	}
 
 	// Create a temporary directory for the clip
@@ -767,4 +798,13 @@ func (l *logSanitizer) Write(p []byte) (n int, err error) {
 func init() {
     // Use os.Stdout directly instead of logger.Writer()
     log.SetOutput(&logSanitizer{os.Stdout})
+}
+
+// getPoolManagerData returns simulated data from PoolManager API
+func getPoolManagerData() *PoolManagerData {
+	// Return simulated test data
+	return &PoolManagerData{
+		Players:     []string{"Alice", "Bob"},
+		MatchNumber: 3,
+	}
 }
