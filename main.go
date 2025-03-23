@@ -84,7 +84,7 @@ func NewClipManager(tempDir string, hostPort string) (*ClipManager, error) {
 // RateLimit is a middleware that limits requests based on the ClipManager's rate limiter
 func (cm *ClipManager) RateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !cm.limiter.Allow() {
+		if (!cm.limiter.Allow()) {
 			// Rate limit exceeded
 			http.Error(w, "Too many requests", http.StatusTooManyRequests)
 			log.Printf("Rate limit exceeded for IP: %s", r.RemoteAddr)
@@ -462,7 +462,7 @@ func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, categor
 	// Define the operation to be retried
 	operation := func() error {
 		file, err := os.Open(filePath)
-		if err != nil {
+		if (err != nil) {
 			return fmt.Errorf("could not open file for sending to Telegram: %v", err)
 		}
 		defer file.Close()
@@ -871,6 +871,67 @@ func (cm *ClipManager) checkIfRunningInDocker() bool {
 	return false
 }
 
+// serveWebInterface serves the HTML form interface at the root endpoint
+func (cm *ClipManager) serveWebInterface(w http.ResponseWriter, r *http.Request) {
+	// Define the path to the template file
+	templatePath := "templates/index.html"
+	
+	// Check if the file exists
+	_, err := os.Stat(templatePath)
+	if err != nil {
+		// If file doesn't exist, try to find it relative to the executable
+		execPath, err := os.Executable()
+		if err == nil {
+			execDir := filepath.Dir(execPath)
+			templatePath = filepath.Join(execDir, "templates/index.html")
+		}
+	}
+	
+	// Try to read the HTML file
+	htmlContent, err := os.ReadFile(templatePath)
+	if err != nil {
+		// If we still can't find the file, use embedded HTML
+		log.Printf("Error reading template file: %v, using embedded HTML", err)
+		htmlContent = []byte(getEmbeddedHTML())
+	}
+	
+	w.Header().Set("Content-Type", "text/html")
+	w.Write(htmlContent)
+}
+
+// getEmbeddedHTML returns the HTML content as a fallback if the file can't be loaded
+func getEmbeddedHTML() string {
+	return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClipManager</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>ClipManager</h1>
+    <p>The template file could not be loaded. Please make sure the templates directory exists.</p>
+    <p>API endpoint is still available at: /api/clip</p>
+</body>
+</html>
+`
+}
+
 func main() {
 	// Simple starting message
 	log.Println("Starting ClipManager...")
@@ -887,16 +948,27 @@ func main() {
 		log.Fatalf("Failed to initialize ClipManager: %v", err)
 	}
 	
-	// Set up HTTP server with rate limiting middleware
+	// Create necessary directories if they don't exist
+	os.MkdirAll("templates", 0755)
+	os.MkdirAll("static/css", 0755)
+	os.MkdirAll("static/img", 0755)
+	
+	// Set up HTTP server with rate limiting middleware for the API endpoint
 	http.HandleFunc("/api/clip", clipManager.RateLimit(clipManager.HandleClipRequest))
+	
+	// Add the web interface at the root endpoint
+	http.HandleFunc("/", clipManager.serveWebInterface)
 
 	// Simple startup success message
 	log.Println("ClipManager is running!")
 	
 	// Clear access information with example
-	log.Printf("Access the application at: http://localhost:%s/api/clip", hostPort)
-	log.Printf("Example request: http://localhost:%s/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID", hostPort)
+	log.Printf("Access the web interface at: http://localhost:%s/", hostPort)
+	log.Printf("API endpoint available at: http://localhost:%s/api/clip", hostPort)
 	
+	// Serve static files from the static directory
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+
 	// Start the server (no additional messaging needed here)
 	log.Fatal(http.ListenAndServe(":"+containerPort, nil))
 }

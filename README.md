@@ -1,7 +1,7 @@
 # ClipManager
 
 <p>
-  <img src="img/ClipManager.png" alt="ClipManager Logo" width="400">
+  <img src="static/img/ClipManager.png" alt="ClipManager Logo" width="400">
 </p>
 
 A simple, fast and lightweight application to record clips from an RTSP camera and send them to Telegram, Mattermost, or Discord.

@@ -26,11 +26,18 @@ WORKDIR /app
 # Install FFmpeg and dependencies directly in the final image
 RUN apk add --no-cache ffmpeg
 
-# Create clips directory
+# Create required directories
 RUN mkdir -p /app/clips
+RUN mkdir -p /app/templates
+RUN mkdir -p /app/static/css
+RUN mkdir -p /app/static/img
 
 # Copy the binary
 COPY --from=builder /app/clipmanager .
+
+# Copy templates and static files
+COPY templates/ /app/templates/
+COPY static/ /app/static/
 
 # Expose port 5000 - this is the default internal port
 EXPOSE 5000
