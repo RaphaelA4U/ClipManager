@@ -346,32 +346,44 @@ func (cm *ClipManager) CompressClipIfNeeded(filePath string) (string, error) {
 
 // SendToChatApp sends the clip to the appropriate chat app
 func (cm *ClipManager) SendToChatApp(filePath string, req ClipRequest) error {
+	// Retrieve PoolManager data if the connection is enabled
+	var poolManagerData *PoolManagerData
+	if req.PoolManagerConnection {
+		poolManagerData = cm.getPoolManagerData()
+	}
+
 	switch req.ChatApp {
 	case "telegram":
-		return cm.sendToTelegram(filePath, req.TelegramBotToken, req.TelegramChatID, req.Category)
+		return cm.sendToTelegram(filePath, req.TelegramBotToken, req.TelegramChatID, req.Category, poolManagerData)
 	case "mattermost":
-		return cm.sendToMattermost(filePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req.Category)
+		return cm.sendToMattermost(filePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req.Category, poolManagerData)
 	case "discord":
-		return cm.sendToDiscord(filePath, req.DiscordWebhookURL, req.Category)
+		return cm.sendToDiscord(filePath, req.DiscordWebhookURL, req.Category, poolManagerData)
 	default:
 		return fmt.Errorf("unsupported chat app: %s", req.ChatApp)
 	}
 }
 
 // sendToTelegram sends a clip to Telegram
-func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, category string) error {
+func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, category string, poolManagerData *PoolManagerData) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("could not open file for sending to Telegram: %v", err)
 	}
 	defer file.Close()
 
-	// Generate message with optional category
+	// Generate message with optional category and pool manager data
 	var captionText string
 	if category != "" {
 		captionText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
 	} else {
 		captionText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
+	}
+
+	// Add team and match information if available
+	if poolManagerData != nil && len(poolManagerData.Players) == 2 {
+		captionText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
+			poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
 	}
 
 	// Make sure the telegram_chat_id is properly formatted (remove any quotes)
@@ -444,7 +456,7 @@ func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, categor
 }
 
 // sendToMattermost sends a clip to Mattermost
-func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelID string, category string) error {
+func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelID string, category string, poolManagerData *PoolManagerData) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("could not open file for sending to Mattermost: %v", err)
@@ -514,12 +526,18 @@ func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelI
 		return fmt.Errorf("no file IDs returned from Mattermost")
 	}
 	
-	// Generate message with optional category
+	// Generate message with optional category and pool manager data
 	var messageText string
 	if category != "" {
 		messageText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
 	} else {
 		messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
+	}
+	
+	// Add team and match information if available
+	if poolManagerData != nil && len(poolManagerData.Players) == 2 {
+		messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
+			poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
 	}
 	
 	// Now create a post with the uploaded file
@@ -565,19 +583,25 @@ func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelI
 }
 
 // sendToDiscord sends a clip to Discord
-func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, category string) error {
+func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, category string, poolManagerData *PoolManagerData) error {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("could not open file for sending to Discord: %v", err)
 	}
 	defer file.Close()
 
-	// Generate message with optional category
+	// Generate message with optional category and pool manager data
 	var messageText string
 	if category != "" {
 		messageText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
 	} else {
 		messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
+	}
+
+	// Add team and match information if available
+	if poolManagerData != nil && len(poolManagerData.Players) == 2 {
+		messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
+			poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
 	}
 
 	// Create a multipart form for the file
@@ -640,8 +664,9 @@ func (cm *ClipManager) formatCurrentTime() string {
 // getPoolManagerData returns simulated data from PoolManager API
 func (cm *ClipManager) getPoolManagerData() *PoolManagerData {
 	// Return simulated test data
+	// This is currently test data - in real implementation would fetch from PoolManager API
 	return &PoolManagerData{
-		Players:     []string{"Alice", "Bob"},
+		Players:     []string{"Kylito & Raphael", "M4tthyTheSniper & BlackBallJip"},
 		MatchNumber: 3,
 	}
 }
