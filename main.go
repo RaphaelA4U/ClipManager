@@ -277,7 +277,7 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 	return nil
 }
 
-// RecordClip records a clip using FFmpeg
+// RecordClip records a clip using FFmpeg with retry logic for connection issues
 func (cm *ClipManager) RecordClip(cameraIP string, backtrackSeconds, durationSeconds int, outputPath string) error {
 	outputArgs := ffmpeg.KwArgs{
 		"ss":         backtrackSeconds,
@@ -295,8 +295,33 @@ func (cm *ClipManager) RecordClip(cameraIP string, backtrackSeconds, durationSec
 	// Log the command
 	log.Printf("FFmpeg command: %s", ffmpegCmd.String())
 	
-	err := ffmpegCmd.Run()
+	// Execute with retry logic for connection issues
+	maxFFmpegRetries := 5
+	ffmpegRetryDelay := 10 * time.Second
+	
+	var err error
+	for attempt := 1; attempt <= maxFFmpegRetries; attempt++ {
+		err = ffmpegCmd.Run()
+		
+		// If successful or not a connection issue, don't retry
+		if err == nil || !isConnectionError(err.Error()) {
+			break
+		}
+		
+		// Connection issue detected, log and retry if attempts remain
+		if attempt < maxFFmpegRetries {
+			log.Printf("Camera connection issue detected: %v", err)
+			log.Printf("Retry %d/%d for FFmpeg connection...", attempt, maxFFmpegRetries)
+			time.Sleep(ffmpegRetryDelay)
+		} else {
+			log.Printf("All %d connection retries failed for camera: %v", maxFFmpegRetries, err)
+		}
+	}
+	
 	if err != nil {
+		if isConnectionError(err.Error()) {
+			return fmt.Errorf("could not connect to camera after multiple attempts: %v", err)
+		}
 		return fmt.Errorf("RTSP stream may be unavailable or invalid: %v", err)
 	}
 
@@ -312,6 +337,32 @@ func (cm *ClipManager) RecordClip(cameraIP string, backtrackSeconds, durationSec
 	}
 	
 	return nil
+}
+
+// isConnectionError checks if an error message indicates a connection issue
+func isConnectionError(errMsg string) bool {
+	connectionErrors := []string{
+		"connection refused",
+		"Connection refused",
+		"no route to host",
+		"No route to host",
+		"network is unreachable",
+		"Network is unreachable",
+		"connection timed out",
+		"Connection timed out",
+		"failed to connect",
+		"EOF",
+		"timeout",
+		"Timeout",
+	}
+	
+	for _, connErr := range connectionErrors {
+		if strings.Contains(errMsg, connErr) {
+			return true
+		}
+	}
+	
+	return false
 }
 
 // CompressClipIfNeeded checks if the clip needs compression and compresses it if necessary
