@@ -123,7 +123,7 @@ Make a GET or POST request to the application with the following parameters:
 ### Example Request URL
 
 ```
-http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID
+http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID&category=Motion
 ```
 
 Remember to replace the host port in the URL if you've changed it in your docker-compose.yml.
@@ -137,6 +137,7 @@ Remember to replace the host port in the URL if you've changed it in your docker
 | backtrack_seconds | Number of seconds to go back for recording (5-300) | 10 | Yes |
 | duration_seconds | Duration of the clip in seconds (5-300) | 10 | Yes |
 | chat_app | The chat app ("telegram", "mattermost", or "discord") | telegram | Yes |
+| category | Optional category for the clip | Motion | No |
 
 #### Chat App-Specific Parameters
 
@@ -164,7 +165,7 @@ Remember to replace the host port in the URL if you've changed it in your docker
 
 **GET Request**:
 ```bash
-curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789"
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789&category=Motion"
 ```
 
 **POST Request**:
@@ -177,7 +178,8 @@ curl -X POST http://localhost:5001/api/clip \
     "duration_seconds": 10,
     "chat_app": "telegram",
     "telegram_bot_token": "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-    "telegram_chat_id": "-100123456789"
+    "telegram_chat_id": "-100123456789",
+    "category": "Motion"
   }'
 ```
 
@@ -185,14 +187,14 @@ curl -X POST http://localhost:5001/api/clip \
 
 **GET Request**:
 ```bash
-curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn"
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=mattermost&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn&category=Alert"
 ```
 
 #### Discord
 
 **GET Request**:
 ```bash
-curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=discord&discord_webhook_url=https://discord.com/api/webhooks/id/token"
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=discord&discord_webhook_url=https://discord.com/api/webhooks/id/token&category=Person"
 ```
 
 ### Response
@@ -212,6 +214,7 @@ On errors, you will receive an HTTP error status code with a descriptive error m
 - For maximum performance, the clip is sent asynchronously to the messaging service.
 - When compressed, the app preserves the original aspect ratio of the video.
 - Videos larger than 50MB are automatically compressed to reduce file size while maintaining quality.
+- The optional category parameter allows you to categorize clips (e.g., "Motion", "Person", "Alert") in the message.
 
 ## Troubleshooting
 

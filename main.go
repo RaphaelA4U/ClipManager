@@ -23,6 +23,7 @@ type ClipRequest struct {
 	BacktrackSeconds int    `json:"backtrack_seconds"`
 	DurationSeconds  int    `json:"duration_seconds"`
 	ChatApp          string `json:"chat_app"`
+	Category         string `json:"category"` // New optional category parameter
 	
 	// Chat app specific parameters
 	// Telegram parameters
@@ -120,6 +121,7 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 		backtrackSeconds := r.URL.Query().Get("backtrack_seconds")
 		durationSeconds := r.URL.Query().Get("duration_seconds")
 		req.ChatApp = strings.ToLower(r.URL.Query().Get("chat_app"))
+		req.Category = r.URL.Query().Get("category") // Parse category parameter
 		
 		// Chat app specific parameters
 		req.TelegramBotToken = r.URL.Query().Get("telegram_bot_token")
@@ -317,11 +319,11 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 
 		switch req.ChatApp {
 		case "telegram":
-			sendToTelegram(finalFilePath, req.TelegramBotToken, req.TelegramChatID)
+			sendToTelegram(finalFilePath, req.TelegramBotToken, req.TelegramChatID, req.Category)
 		case "mattermost":
-			sendToMattermost(finalFilePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel)
+			sendToMattermost(finalFilePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req.Category)
 		case "discord":
-			sendToDiscord(finalFilePath, req.DiscordWebhookURL)
+			sendToDiscord(finalFilePath, req.DiscordWebhookURL, req.Category)
 		}
 	}()
 
@@ -332,7 +334,7 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // Function to send to Telegram
-func sendToTelegram(filePath, botToken, chatID string) {
+func sendToTelegram(filePath, botToken, chatID string, category string) {
     file, err := os.Open(filePath)
     if err != nil {
         log.Printf("Could not open file for sending to Telegram: %v", err)
@@ -340,8 +342,13 @@ func sendToTelegram(filePath, botToken, chatID string) {
     }
     defer file.Close()
 
-    // Generate timestamp message
-    captionText := fmt.Sprintf("New Clip: %s", formatCurrentTime())
+    // Generate message with optional category
+    var captionText string
+    if category != "" {
+        captionText = fmt.Sprintf("New %s Clip: %s", category, formatCurrentTime())
+    } else {
+        captionText = fmt.Sprintf("New Clip: %s", formatCurrentTime())
+    }
 
     // Make sure the telegram_chat_id is properly formatted (remove any quotes)
     chatID = strings.Trim(chatID, `"'`)
@@ -436,7 +443,7 @@ func getFileSize(filePath string) int64 {
 }
 
 // Function to send to Mattermost
-func sendToMattermost(filePath, mattermostURL, token, channelID string) {
+func sendToMattermost(filePath, mattermostURL, token, channelID string, category string) {
     file, err := os.Open(filePath)
     if err != nil {
         log.Printf("Could not open file for sending to Mattermost: %v", err)
@@ -517,6 +524,14 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string) {
         return
     }
     
+    // Generate message with optional category
+    var messageText string
+    if category != "" {
+        messageText = fmt.Sprintf("New %s Clip: %s", category, formatCurrentTime())
+    } else {
+        messageText = fmt.Sprintf("New Clip: %s", formatCurrentTime())
+    }
+    
     // Now create a post with the uploaded file
     fileIDs := make([]string, len(fileResponse.FileInfos))
     for i, fileInfo := range fileResponse.FileInfos {
@@ -525,7 +540,7 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string) {
     
     postData := map[string]interface{}{
         "channel_id": channelID,
-        "message":    fmt.Sprintf("New Clip: %s", formatCurrentTime()),
+        "message":    messageText,
         "file_ids":   fileIDs,
     }
     
@@ -563,7 +578,7 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string) {
 }
 
 // Function to send to Discord
-func sendToDiscord(filePath, webhookURL string) {
+func sendToDiscord(filePath, webhookURL string, category string) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		log.Printf("Could not open file for sending to Discord: %v", err)
@@ -571,8 +586,13 @@ func sendToDiscord(filePath, webhookURL string) {
 	}
 	defer file.Close()
 
-	// Generate timestamp message
-	messageText := fmt.Sprintf("New Clip: %s", formatCurrentTime())
+	// Generate message with optional category
+	var messageText string
+	if category != "" {
+		messageText = fmt.Sprintf("New %s Clip: %s", category, formatCurrentTime())
+	} else {
+		messageText = fmt.Sprintf("New Clip: %s", formatCurrentTime())
+	}
 
 	// Create a multipart form for the file
 	var requestBody bytes.Buffer
