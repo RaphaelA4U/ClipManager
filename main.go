@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
@@ -23,7 +24,7 @@ type ClipRequest struct {
 	CameraIP         string `json:"camera_ip"`
 	BacktrackSeconds int    `json:"backtrack_seconds"`
 	DurationSeconds  int    `json:"duration_seconds"`
-	ChatApp          string `json:"chat_app"`
+	ChatApp          string `json:"chat_app"` // Now supports comma-separated list: "telegram,discord,mattermost"
 	Category         string `json:"category"` // New optional category parameter
 	
 	// Chat app specific parameters
@@ -135,8 +136,7 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Standardize chat app to lowercase
-		req.ChatApp = strings.ToLower(req.ChatApp)
+			// Keep the chat_app field in its original form to support comma-separated values
 	} else {
 		http.Error(w, "Method not allowed, use GET or POST", http.StatusMethodNotAllowed)
 		return
@@ -178,7 +178,7 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Send the clip to the chosen chat app (asynchronously)
+	// Send the clip to the chosen chat apps (asynchronously)
 	go func() {
 		defer os.Remove(finalFilePath) // Make sure the file is always removed
 		if err := cm.SendToChatApp(finalFilePath, req); err != nil {
@@ -219,33 +219,40 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 		return fmt.Errorf("invalid parameter: duration_seconds must be between 1 and 300")
 	}
 
-	// Chat app-specific validation
-	switch req.ChatApp {
-	case "telegram":
-		if req.TelegramBotToken == "" {
-			return fmt.Errorf("missing required parameter for Telegram: telegram_bot_token")
+	// Split the chat_app string into a list of chat apps
+	chatApps := strings.Split(strings.ToLower(req.ChatApp), ",")
+	
+	// Validate each chat app
+	for _, app := range chatApps {
+		app = strings.TrimSpace(app)
+		
+		switch app {
+		case "telegram":
+			if req.TelegramBotToken == "" {
+				return fmt.Errorf("missing required parameter for Telegram: telegram_bot_token")
+			}
+			if req.TelegramChatID == "" {
+				return fmt.Errorf("missing required parameter for Telegram: telegram_chat_id")
+			}
+		case "mattermost":
+			if req.MattermostURL == "" {
+				return fmt.Errorf("missing required parameter for Mattermost: mattermost_url")
+			}
+			if req.MattermostToken == "" {
+				return fmt.Errorf("missing required parameter for Mattermost: mattermost_token")
+			}
+			if req.MattermostChannel == "" {
+				return fmt.Errorf("missing required parameter for Mattermost: mattermost_channel")
+			}
+			// Make sure MattermostURL has no trailing slash
+			req.MattermostURL = strings.TrimSuffix(req.MattermostURL, "/")
+		case "discord":
+			if req.DiscordWebhookURL == "" {
+				return fmt.Errorf("missing required parameter for Discord: discord_webhook_url")
+			}
+		default:
+			return fmt.Errorf("invalid chat_app parameter '%s'. Supported values are: 'telegram', 'mattermost', or 'discord'", app)
 		}
-		if req.TelegramChatID == "" {
-			return fmt.Errorf("missing required parameter for Telegram: telegram_chat_id")
-		}
-	case "mattermost":
-		if req.MattermostURL == "" {
-			return fmt.Errorf("missing required parameter for Mattermost: mattermost_url")
-		}
-		if req.MattermostToken == "" {
-			return fmt.Errorf("missing required parameter for Mattermost: mattermost_token")
-		}
-		if req.MattermostChannel == "" {
-			return fmt.Errorf("missing required parameter for Mattermost: mattermost_channel")
-		}
-		// Make sure MattermostURL has no trailing slash
-		req.MattermostURL = strings.TrimSuffix(req.MattermostURL, "/")
-	case "discord":
-		if req.DiscordWebhookURL == "" {
-			return fmt.Errorf("missing required parameter for Discord: discord_webhook_url")
-		}
-	default:
-		return fmt.Errorf("invalid chat_app parameter. Supported values are: 'telegram', 'mattermost', or 'discord'")
 	}
 	
 	return nil
@@ -344,7 +351,7 @@ func (cm *ClipManager) CompressClipIfNeeded(filePath string) (string, error) {
 	return finalFilePath, nil
 }
 
-// SendToChatApp sends the clip to the appropriate chat app
+// SendToChatApp sends the clip to the appropriate chat apps
 func (cm *ClipManager) SendToChatApp(filePath string, req ClipRequest) error {
 	// Retrieve PoolManager data if the connection is enabled
 	var poolManagerData *PoolManagerData
@@ -352,16 +359,56 @@ func (cm *ClipManager) SendToChatApp(filePath string, req ClipRequest) error {
 		poolManagerData = cm.getPoolManagerData()
 	}
 
-	switch req.ChatApp {
-	case "telegram":
-		return cm.sendToTelegram(filePath, req.TelegramBotToken, req.TelegramChatID, req.Category, poolManagerData)
-	case "mattermost":
-		return cm.sendToMattermost(filePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req.Category, poolManagerData)
-	case "discord":
-		return cm.sendToDiscord(filePath, req.DiscordWebhookURL, req.Category, poolManagerData)
-	default:
-		return fmt.Errorf("unsupported chat app: %s", req.ChatApp)
+	// Split the chat_app string into a list of chat apps
+	chatApps := strings.Split(strings.ToLower(req.ChatApp), ",")
+	
+	var wg sync.WaitGroup
+	errors := make(chan error, len(chatApps))
+	
+	for _, app := range chatApps {
+		app = strings.TrimSpace(app)
+		
+		wg.Add(1)
+		go func(app string) {
+			defer wg.Done()
+			
+			var err error
+			switch app {
+			case "telegram":
+				err = cm.sendToTelegram(filePath, req.TelegramBotToken, req.TelegramChatID, req.Category, poolManagerData)
+			case "mattermost":
+				err = cm.sendToMattermost(filePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req.Category, poolManagerData)
+			case "discord":
+				err = cm.sendToDiscord(filePath, req.DiscordWebhookURL, req.Category, poolManagerData)
+			default:
+				// This shouldn't happen since we validate earlier, but just in case
+				err = fmt.Errorf("unsupported chat app: %s", app)
+			}
+			
+			if err != nil {
+				log.Printf("Error sending clip to %s: %v", app, err)
+				errors <- fmt.Errorf("error sending to %s: %v", app, err)
+			} else {
+				log.Printf("Successfully sent clip to %s", app)
+			}
+		}(app)
 	}
+	
+	// Wait for all goroutines to complete
+	wg.Wait()
+	close(errors)
+	
+	// Check if we had any errors
+	var errList []string
+	for err := range errors {
+		errList = append(errList, err.Error())
+	}
+	
+	if len(errList) > 0 {
+		return fmt.Errorf("errors sending clip: %s", strings.Join(errList, "; "))
+	}
+	
+	return nil
 }
 
 // sendToTelegram sends a clip to Telegram
@@ -666,7 +713,7 @@ func (cm *ClipManager) getPoolManagerData() *PoolManagerData {
 	// Return simulated test data
 	// This is currently test data - in real implementation would fetch from PoolManager API
 	return &PoolManagerData{
-		Players:     []string{"Kylito & Raphael", "M4tthyTheSniper & BlackBallJip"},
+		Players:     []string{"Kylito & Raphael", "M4tthyTheSniper & 8BallJip"},
 		MatchNumber: 3,
 	}
 }
