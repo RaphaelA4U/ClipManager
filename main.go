@@ -15,6 +15,7 @@ import (
 	"time"
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
+	"golang.org/x/time/rate"
 )
 
 type ClipRequest struct {
@@ -43,6 +44,23 @@ type ClipResponse struct {
 	Message string `json:"message"`
 }
 
+// Global rate limiter - 1 request per second with a burst of 1
+var limiter = rate.NewLimiter(rate.Limit(1), 1)
+
+// rateLimit is a middleware that limits requests to 1 per second
+func rateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			// Rate limit exceeded
+			http.Error(w, "Too many requests", http.StatusTooManyRequests)
+			log.Printf("Rate limit exceeded for IP: %s", r.RemoteAddr)
+			return
+		}
+		// If rate limit not exceeded, proceed to the handler
+		next(w, r)
+	}
+}
+
 func main() {
 	// Simple starting message
 	log.Println("Starting ClipManager...")
@@ -56,8 +74,8 @@ func main() {
 	// Use the host port for all user-facing URLs
 	accessPort := hostPort
 	
-	// Set up HTTP server
-	http.HandleFunc("/api/clip", handleClipRequest)
+	// Set up HTTP server with rate limiting middleware
+	http.HandleFunc("/api/clip", rateLimit(handleClipRequest))
 
 	// Simple startup success message
 	log.Println("ClipManager is running!")
