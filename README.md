@@ -6,10 +6,24 @@
 
 A simple, fast and lightweight application to record clips from an RTSP camera and send them to Telegram, Mattermost, or Discord.
 
+## Features
+
+- Record clips from any RTSP camera
+- Send clips to multiple messaging platforms simultaneously:
+  - Telegram
+  - Mattermost
+  - Discord
+- Categorize clips for better organization
+- Automatic compression for large videos
+- Web interface for easy configuration
+- Integration with PoolManager for team and match information
+- API endpoint for programmatic control
+- Stateless design with no database requirements
+
 ## Requirements
 - Docker and Docker Compose
 - An RTSP camera (e.g. `rtsp://username:password@camera-ip:port/path`)
-- One of the following:
+- One or more of the following:
   - A Telegram bot token and chat ID
   - A Mattermost server with API token and channel ID
   - A Discord webhook URL
@@ -29,6 +43,30 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
 
 3. **Access the application**:
    By default, the application will be available at `http://localhost:5001`
+
+## Using the Web Interface
+
+The ClipManager includes a user-friendly web interface accessible at the root URL (`http://localhost:5001/`).
+
+### Configuration Tab
+
+1. Enter your camera's RTSP URL in the "Camera IP" field
+2. Set the desired "Backtrack Seconds" (how far back to start recording)
+3. Set the "Duration Seconds" (length of the clip)
+4. Select one or more messaging platforms (Telegram, Mattermost, Discord)
+5. Enter platform-specific credentials for each selected platform
+6. Optionally add a category to organize your clips
+7. Enable PoolManager Connection if you want to include team and match information
+8. Click "Save" to store your configuration
+9. Click "Record Clip" to capture and send a clip with these settings
+
+### Integration Tab
+
+After saving your configuration, you can access integration options:
+
+1. QR Code: Scan with a mobile device to trigger recording
+2. HTML Button Code: Copy embed code for websites or dashboards
+3. cURL Command: Copy command for terminal or script integration
 
 ## Docker Port Configuration
 

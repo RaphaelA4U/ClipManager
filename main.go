@@ -953,28 +953,23 @@ func main() {
 	os.MkdirAll("static/css", 0755)
 	os.MkdirAll("static/img", 0755)
 	
-	// Set up HTTP server with rate limiting middleware for the API endpoint
-	http.HandleFunc("/api/clip", clipManager.RateLimit(clipManager.HandleClipRequest))
+	// Serve static files from the static directory
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	
-	// Add the web interface at the root endpoint
+	// Set up HTTP routes
+	http.HandleFunc("/api/clip", clipManager.RateLimit(clipManager.HandleClipRequest))
 	http.HandleFunc("/", clipManager.serveWebInterface)
 
-	// Simple startup success message
+	// Log startup information
 	log.Println("ClipManager is running!")
-	
-	// Clear access information with example
 	log.Printf("Access the web interface at: http://localhost:%s/", hostPort)
 	log.Printf("API endpoint available at: http://localhost:%s/api/clip", hostPort)
 	
-	// Serve static files from the static directory
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-
-	// Start the server (no additional messaging needed here)
+	// Start the HTTP server
 	log.Fatal(http.ListenAndServe(":"+containerPort, nil))
 }
 
 // getPort gets the PORT value from environment variable or returns the default
-// Kept outside of ClipManager since they're only used once at startup
 func getPort() string {
 	envPort := os.Getenv("PORT")
 	if envPort != "" {
