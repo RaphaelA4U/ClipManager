@@ -93,6 +93,10 @@ func (cm *ClipManager) RateLimit(next http.HandlerFunc) http.HandlerFunc {
 
 // HandleClipRequest handles HTTP requests to create and send clips
 func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request) {
+	// Track the start time for this request
+	startTime := time.Now()
+	requestID := fmt.Sprintf("req_%d", time.Now().UnixNano())
+	
 	// Accept both GET and POST
 	var req ClipRequest
 
@@ -118,7 +122,7 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 			var err error
 			req.PoolManagerConnection, err = strconv.ParseBool(poolManagerParam)
 			if err != nil {
-				log.Printf("Invalid poolmanager_connection parameter: %v", err)
+				log.Printf("[%s] Invalid poolmanager_connection parameter: %v", requestID, err)
 				req.PoolManagerConnection = false
 			}
 		}
@@ -135,8 +139,8 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return
-		}
 			// Keep the chat_app field in its original form to support comma-separated values
+		}
 	} else {
 		http.Error(w, "Method not allowed, use GET or POST", http.StatusMethodNotAllowed)
 		return
@@ -148,48 +152,59 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Get data from PoolManager if needed
-	var poolManagerData *PoolManagerData
-	if req.PoolManagerConnection {
-		poolManagerData = cm.getPoolManagerData()
-		if poolManagerData != nil {
-			log.Printf("Retrieved PoolManager data: players=%v, match number=%d", 
-				poolManagerData.Players, poolManagerData.MatchNumber)
-		}
-	}
-
 	// Generate a unique filename
 	fileName := fmt.Sprintf("clip_%d.mp4", time.Now().Unix())
 	filePath := filepath.Join(cm.tempDir, fileName)
 
-	// Record the clip
-	err := cm.RecordClip(req.CameraIP, req.BacktrackSeconds, req.DurationSeconds, filePath)
-	if err != nil {
-		log.Printf("Recording error: %v", err)
-		http.Error(w, "Could not record the clip: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Check file size and compress if needed
-	finalFilePath, err := cm.CompressClipIfNeeded(filePath)
-	if err != nil {
-		log.Printf("Compression error: %v", err)
-		http.Error(w, "Error processing clip: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Send the clip to the chosen chat apps (asynchronously)
-	go func() {
-		defer os.Remove(finalFilePath) // Make sure the file is always removed
-		if err := cm.SendToChatApp(finalFilePath, req); err != nil {
-			log.Printf("Error sending clip: %v", err)
-		}
-	}()
-
-	// Send success response immediately
-	response := ClipResponse{Message: "Clip recorded and sending started"}
+	// Return response immediately after validation
+	response := ClipResponse{Message: "Clip recording and sending started"}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+
+	// Process everything else asynchronously
+	go func() {
+		defer func() {
+			// Log the total processing time when all operations are complete
+			processingTime := time.Since(startTime)
+			log.Printf("[%s] Total processing time: %v", requestID, processingTime)
+		}()
+
+		// Get data from PoolManager if needed
+		var poolManagerData *PoolManagerData
+		if req.PoolManagerConnection {
+			poolManagerData = cm.getPoolManagerData()
+			if poolManagerData != nil {
+				log.Printf("[%s] Retrieved PoolManager data: players=%v, match number=%d", 
+					requestID, poolManagerData.Players, poolManagerData.MatchNumber)
+			}
+		}
+		
+		// Record the clip
+		log.Printf("[%s] Starting clip recording for camera: %s", requestID, req.CameraIP)
+		err := cm.RecordClip(req.CameraIP, req.BacktrackSeconds, req.DurationSeconds, filePath)
+		if err != nil {
+			log.Printf("[%s] Recording error: %v", requestID, err)
+			return
+		}
+		log.Printf("[%s] Clip recording completed", requestID)
+
+		// Check file size and compress if needed
+		finalFilePath, err := cm.CompressClipIfNeeded(filePath)
+		if err != nil {
+			log.Printf("[%s] Compression error: %v", requestID, err)
+			// Clean up the original file if compression failed
+			os.Remove(filePath)
+			return
+		}
+
+		// Send the clip to the chosen chat apps
+		if err := cm.SendToChatApp(finalFilePath, req); err != nil {
+			log.Printf("[%s] Error sending clip: %v", requestID, err)
+		}
+		
+		// Clean up the file after sending
+		os.Remove(finalFilePath)
+	}()
 }
 
 // validateRequest validates the clip request parameters
@@ -313,15 +328,15 @@ func (cm *ClipManager) CompressClipIfNeeded(filePath string) (string, error) {
 		// Create path for compressed file
 		compressedFilePath := filepath.Join(filepath.Dir(filePath), "compressed_"+filepath.Base(filePath))
 		
-		// Compress to 1920x1080 while maintaining aspect ratio
+		// Compress to 1280x720 with ultrafast preset (optimized for speed)
 		compressCmd := ffmpeg.Input(filePath).
 			Output(compressedFilePath, ffmpeg.KwArgs{
-				"vf":       "scale=1920:-2",  // Scale to 1920px width, auto height to preserve aspect ratio
+				"vf":       "scale=1280:720",  // Scale to 720p resolution for faster encoding
 				"c:v":      "libx264",
-				"preset":   "medium",  // Better quality than "ultrafast"
-				"crf":      "23",      // Good quality (lower = better quality)
+				"preset":   "ultrafast",  // Fastest encoding (lower quality but much faster)
+				"crf":      "28",         // Lower quality (higher number = lower quality)
 				"c:a":      "aac",
-				"b:a":      "128k",
+				"b:a":      "96k",        // Lower audio bitrate
 				"movflags": "+faststart",
 			}). 
 			OverWriteOutput()
