@@ -60,6 +60,8 @@ type ClipManager struct {
 	httpClient *http.Client
 	limiter    *rate.Limiter
 	hostPort   string
+	maxRetries int         // Maximum number of retry attempts
+	retryDelay time.Duration  // Delay between retry attempts
 }
 
 // NewClipManager creates a new ClipManager instance
@@ -74,6 +76,8 @@ func NewClipManager(tempDir string, hostPort string) (*ClipManager, error) {
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 		limiter:    rate.NewLimiter(rate.Limit(1), 1),
 		hostPort:   hostPort,
+		maxRetries: 3,          // Default to 3 retries
+		retryDelay: 5 * time.Second, // Default to 5 seconds delay
 	}, nil
 }
 
@@ -366,6 +370,352 @@ func (cm *ClipManager) CompressClipIfNeeded(filePath string) (string, error) {
 	return finalFilePath, nil
 }
 
+// RetryOperation executes the given function and retries up to maxRetries times if it fails
+func (cm *ClipManager) RetryOperation(operation func() error, serviceName string) error {
+	var err error
+	
+	// Try the main attempt
+	err = operation()
+	if err == nil {
+		// Success on first try
+		return nil
+	}
+	
+	// Main attempt failed, log and start retries
+	log.Printf("Error sending clip to %s: %v", serviceName, err)
+	
+	// Retry logic
+	for attempt := 1; attempt <= cm.maxRetries; attempt++ {
+		log.Printf("Retry %d/%d for %s...", attempt, cm.maxRetries, serviceName)
+		
+		// Wait before retrying
+		time.Sleep(cm.retryDelay)
+		
+		// Try again
+		err = operation()
+		if err == nil {
+			log.Printf("Retry %d/%d for %s succeeded", attempt, cm.maxRetries, serviceName)
+			return nil
+		}
+		
+		log.Printf("Retry %d/%d for %s failed: %v", attempt, cm.maxRetries, serviceName, err)
+	}
+	
+	// All retries failed
+	log.Printf("All %d retries failed for %s", cm.maxRetries, serviceName)
+	return fmt.Errorf("failed to send clip to %s after %d attempts: %v", serviceName, cm.maxRetries+1, err)
+}
+
+// sendToTelegram sends a clip to Telegram
+func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, category string, poolManagerData *PoolManagerData) error {
+	// Define the operation to be retried
+	operation := func() error {
+		file, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("could not open file for sending to Telegram: %v", err)
+		}
+		defer file.Close()
+
+		// Generate message with optional category and pool manager data
+		var captionText string
+		if category != "" {
+			captionText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
+		} else {
+			captionText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
+		}
+
+		// Add team and match information if available
+		if poolManagerData != nil && len(poolManagerData.Players) == 2 {
+			captionText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
+				poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
+		}
+
+		// Make sure the telegram_chat_id is properly formatted (remove any quotes)
+		chatID = strings.Trim(chatID, `"'`)
+		
+		// Ensure telegram_chat_id is not empty
+		if chatID == "" {
+			return fmt.Errorf("error: telegram_chat_id is empty, cannot send to Telegram")
+		}
+		
+		reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
+		
+		log.Printf("Sending clip to Telegram. File: %s", filepath.Base(filePath))
+
+		// Create the multipart form
+		var requestBody bytes.Buffer
+		writer := multipart.NewWriter(&requestBody)
+		
+		// Add the chat_id field
+		if err := writer.WriteField("chat_id", chatID); err != nil {
+			return fmt.Errorf("error preparing Telegram request: %v", err)
+		}
+		
+		// Add the caption field
+		if err := writer.WriteField("caption", captionText); err != nil {
+			return fmt.Errorf("error adding caption to Telegram request: %v", err)
+		}
+		
+		// Add the video file
+		part, err := writer.CreateFormFile("video", filepath.Base(filePath))
+		if err != nil {
+			return fmt.Errorf("error creating file field for Telegram: %v", err)
+		}
+		
+		if _, err := io.Copy(part, file); err != nil {
+			return fmt.Errorf("error copying file to Telegram request: %v", err)
+		}
+		
+		// Close the writer
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("error finalizing Telegram request: %v", err)
+		}
+
+		// Create an HTTP POST request
+		req, err := http.NewRequest("POST", reqURL, &requestBody)
+		if err != nil {
+			return fmt.Errorf("error creating Telegram request: %v", err)
+		}
+		
+		// Set the content type
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		
+		// Execute the request
+		resp, err := cm.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("error sending clip to Telegram: %v", err)
+		}
+		defer resp.Body.Close()
+
+		// Read and log the response
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		responseBody := string(bodyBytes)
+		
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("telegram API error: %s - %s", resp.Status, responseBody)
+		}
+
+		log.Printf("Clip successfully sent to Telegram")
+		return nil
+	}
+	
+	// Execute the operation with retries
+	return cm.RetryOperation(operation, "Telegram")
+}
+
+// sendToMattermost sends a clip to Mattermost
+func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelID string, category string, poolManagerData *PoolManagerData) error {
+	// Define the operation to be retried
+	operation := func() error {
+		file, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("could not open file for sending to Mattermost: %v", err)
+		}
+		defer file.Close()
+
+		// Create a multipart form for the file upload
+		var requestBody bytes.Buffer
+		writer := multipart.NewWriter(&requestBody)
+		
+		// Add the channel ID
+		if err := writer.WriteField("channel_id", channelID); err != nil {
+			return fmt.Errorf("error preparing Mattermost request: %v", err)
+		}
+		
+		// Add the file
+		part, err := writer.CreateFormFile("files", filepath.Base(filePath))
+		if err != nil {
+			return fmt.Errorf("error creating file field for Mattermost: %v", err)
+		}
+		
+		if _, err := io.Copy(part, file); err != nil {
+			return fmt.Errorf("error copying file to Mattermost request: %v", err)
+		}
+		
+		// Close the writer
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("error finalizing Mattermost request: %v", err)
+		}
+
+		// First, upload the file
+		fileUploadURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
+		log.Printf("Uploading file to Mattermost")
+		
+		req, err := http.NewRequest("POST", fileUploadURL, &requestBody)
+		if err != nil {
+			return fmt.Errorf("error creating Mattermost upload request: %v", err)
+		}
+		
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+token)
+		
+		resp, err := cm.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("error uploading to Mattermost: %v", err)
+		}
+		defer resp.Body.Close()
+		
+		// Handle file upload response
+		if resp.StatusCode >= 300 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("mattermost file upload error: %s - %s", resp.Status, string(bodyBytes))
+		}
+		
+		// Parse the response to get file IDs
+		var fileResponse struct {
+			FileInfos []struct {
+				ID string `json:"id"`
+			} `json:"file_infos"`
+		}
+		
+		if err := json.NewDecoder(resp.Body).Decode(&fileResponse); err != nil {
+			return fmt.Errorf("error parsing Mattermost response: %v", err)
+		}
+		
+		if len(fileResponse.FileInfos) == 0 {
+			return fmt.Errorf("no file IDs returned from Mattermost")
+		}
+		
+		// Generate message with optional category and pool manager data
+		var messageText string
+		if category != "" {
+			messageText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
+		} else {
+			messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
+		}
+		
+		// Add team and match information if available
+		if poolManagerData != nil && len(poolManagerData.Players) == 2 {
+			messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
+				poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
+		}
+		
+		// Now create a post with the uploaded file
+		fileIDs := make([]string, len(fileResponse.FileInfos))
+		for i, fileInfo := range fileResponse.FileInfos {
+			fileIDs[i] = fileInfo.ID
+		}
+		
+		postData := map[string]interface{}{
+			"channel_id": channelID,
+			"message":    messageText,
+			"file_ids":   fileIDs,
+		}
+		
+		postJSON, err := json.Marshal(postData)
+		if err != nil {
+			return fmt.Errorf("error creating post JSON: %v", err)
+		}
+		
+		// Create the post
+		postURL := fmt.Sprintf("%s/api/v4/posts", mattermostURL)
+		postReq, err := http.NewRequest("POST", postURL, bytes.NewBuffer(postJSON))
+		if err != nil {
+			return fmt.Errorf("error creating post request: %v", err)
+		}
+		
+		postReq.Header.Set("Content-Type", "application/json")
+		postReq.Header.Set("Authorization", "Bearer "+token)
+		
+		postResp, err := cm.httpClient.Do(postReq)
+		if err != nil {
+			return fmt.Errorf("error creating Mattermost post: %v", err)
+		}
+		defer postResp.Body.Close()
+		
+		if postResp.StatusCode >= 300 {
+			bodyBytes, _ := io.ReadAll(postResp.Body)
+			return fmt.Errorf("mattermost post creation error: %s - %s", postResp.Status, string(bodyBytes))
+		}
+		
+		log.Printf("Clip successfully sent to Mattermost")
+		return nil
+	}
+	
+	// Execute the operation with retries
+	return cm.RetryOperation(operation, "Mattermost")
+}
+
+// sendToDiscord sends a clip to Discord
+func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, category string, poolManagerData *PoolManagerData) error {
+	// Define the operation to be retried
+	operation := func() error {
+		file, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("could not open file for sending to Discord: %v", err)
+		}
+		defer file.Close()
+
+		// Generate message with optional category and pool manager data
+		var messageText string
+		if category != "" {
+			messageText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
+		} else {
+			messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
+		}
+
+		// Add team and match information if available
+		if poolManagerData != nil && len(poolManagerData.Players) == 2 {
+			messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
+				poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
+		}
+
+		// Create a multipart form for the file
+		var requestBody bytes.Buffer
+		writer := multipart.NewWriter(&requestBody)
+		
+		// Add message text with timestamp
+		if err := writer.WriteField("content", messageText); err != nil {
+			return fmt.Errorf("error adding content to Discord request: %v", err)
+		}
+		
+		// Add the file
+		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+		if err != nil {
+			return fmt.Errorf("error creating file field for Discord: %v", err)
+		}
+		
+		if _, err := io.Copy(part, file); err != nil {
+			return fmt.Errorf("error copying file to Discord request: %v", err)
+		}
+		
+		// Close the writer
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("error finalizing Discord request: %v", err)
+		}
+
+		log.Printf("Sending clip to Discord. File: %s", filepath.Base(filePath))
+
+		// Create an HTTP POST request
+		req, err := http.NewRequest("POST", webhookURL, &requestBody)
+		if err != nil {
+			return fmt.Errorf("error creating Discord request: %v", err)
+		}
+		
+		// Set the content type
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		
+		// Execute the request
+		resp, err := cm.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("error sending to Discord: %v", err)
+		}
+		defer resp.Body.Close()
+		
+		// Check the response
+		if resp.StatusCode >= 300 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("discord API error: %s - %s", resp.Status, string(bodyBytes))
+		}
+		
+		log.Printf("Clip successfully sent to Discord")
+		return nil
+	}
+	
+	// Execute the operation with retries
+	return cm.RetryOperation(operation, "Discord")
+}
+
 // SendToChatApp sends the clip to the appropriate chat apps
 func (cm *ClipManager) SendToChatApp(filePath string, req ClipRequest) error {
 	// Retrieve PoolManager data if the connection is enabled
@@ -423,298 +773,6 @@ func (cm *ClipManager) SendToChatApp(filePath string, req ClipRequest) error {
 		return fmt.Errorf("errors sending clip: %s", strings.Join(errList, "; "))
 	}
 	
-	return nil
-}
-
-// sendToTelegram sends a clip to Telegram
-func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, category string, poolManagerData *PoolManagerData) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("could not open file for sending to Telegram: %v", err)
-	}
-	defer file.Close()
-
-	// Generate message with optional category and pool manager data
-	var captionText string
-	if category != "" {
-		captionText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
-	} else {
-		captionText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
-	}
-
-	// Add team and match information if available
-	if poolManagerData != nil && len(poolManagerData.Players) == 2 {
-		captionText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
-			poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
-	}
-
-	// Make sure the telegram_chat_id is properly formatted (remove any quotes)
-	chatID = strings.Trim(chatID, `"'`)
-	
-	// Ensure telegram_chat_id is not empty
-	if chatID == "" {
-		return fmt.Errorf("error: telegram_chat_id is empty, cannot send to Telegram")
-	}
-	
-	reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
-	
-	log.Printf("Sending clip to Telegram. File: %s", filepath.Base(filePath))
-
-	// Create the multipart form
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-	
-	// Add the chat_id field
-	if err := writer.WriteField("chat_id", chatID); err != nil {
-		return fmt.Errorf("error preparing Telegram request: %v", err)
-	}
-	
-	// Add the caption field
-	if err := writer.WriteField("caption", captionText); err != nil {
-		return fmt.Errorf("error adding caption to Telegram request: %v", err)
-	}
-	
-	// Add the video file
-	part, err := writer.CreateFormFile("video", filepath.Base(filePath))
-	if err != nil {
-		return fmt.Errorf("error creating file field for Telegram: %v", err)
-	}
-	
-	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("error copying file to Telegram request: %v", err)
-	}
-	
-	// Close the writer
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("error finalizing Telegram request: %v", err)
-	}
-
-	// Create an HTTP POST request
-	req, err := http.NewRequest("POST", reqURL, &requestBody)
-	if err != nil {
-		return fmt.Errorf("error creating Telegram request: %v", err)
-	}
-	
-	// Set the content type
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	
-	// Execute the request
-	resp, err := cm.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error sending clip to Telegram: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Read and log the response
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	responseBody := string(bodyBytes)
-	
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram API error: %s - %s", resp.Status, responseBody)
-	}
-
-	log.Printf("Clip successfully sent to Telegram")
-	return nil
-}
-
-// sendToMattermost sends a clip to Mattermost
-func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelID string, category string, poolManagerData *PoolManagerData) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("could not open file for sending to Mattermost: %v", err)
-	}
-	defer file.Close()
-
-	// Create a multipart form for the file upload
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-	
-	// Add the channel ID
-	if err := writer.WriteField("channel_id", channelID); err != nil {
-		return fmt.Errorf("error preparing Mattermost request: %v", err)
-	}
-	
-	// Add the file
-	part, err := writer.CreateFormFile("files", filepath.Base(filePath))
-	if err != nil {
-		return fmt.Errorf("error creating file field for Mattermost: %v", err)
-	}
-	
-	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("error copying file to Mattermost request: %v", err)
-	}
-	
-	// Close the writer
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("error finalizing Mattermost request: %v", err)
-	}
-
-	// First, upload the file
-	fileUploadURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
-	log.Printf("Uploading file to Mattermost")
-	
-	req, err := http.NewRequest("POST", fileUploadURL, &requestBody)
-	if err != nil {
-		return fmt.Errorf("error creating Mattermost upload request: %v", err)
-	}
-	
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+token)
-	
-	resp, err := cm.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error uploading to Mattermost: %v", err)
-	}
-	defer resp.Body.Close()
-	
-	// Handle file upload response
-	if resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("mattermost file upload error: %s - %s", resp.Status, string(bodyBytes))
-	}
-	
-	// Parse the response to get file IDs
-	var fileResponse struct {
-		FileInfos []struct {
-			ID string `json:"id"`
-		} `json:"file_infos"`
-	}
-	
-	if err := json.NewDecoder(resp.Body).Decode(&fileResponse); err != nil {
-		return fmt.Errorf("error parsing Mattermost response: %v", err)
-	}
-	
-	if len(fileResponse.FileInfos) == 0 {
-		return fmt.Errorf("no file IDs returned from Mattermost")
-	}
-	
-	// Generate message with optional category and pool manager data
-	var messageText string
-	if category != "" {
-		messageText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
-	} else {
-		messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
-	}
-	
-	// Add team and match information if available
-	if poolManagerData != nil && len(poolManagerData.Players) == 2 {
-		messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
-			poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
-	}
-	
-	// Now create a post with the uploaded file
-	fileIDs := make([]string, len(fileResponse.FileInfos))
-	for i, fileInfo := range fileResponse.FileInfos {
-		fileIDs[i] = fileInfo.ID
-	}
-	
-	postData := map[string]interface{}{
-		"channel_id": channelID,
-		"message":    messageText,
-		"file_ids":   fileIDs,
-	}
-	
-	postJSON, err := json.Marshal(postData)
-	if err != nil {
-		return fmt.Errorf("error creating post JSON: %v", err)
-	}
-	
-	// Create the post
-	postURL := fmt.Sprintf("%s/api/v4/posts", mattermostURL)
-	postReq, err := http.NewRequest("POST", postURL, bytes.NewBuffer(postJSON))
-	if err != nil {
-		return fmt.Errorf("error creating post request: %v", err)
-	}
-	
-	postReq.Header.Set("Content-Type", "application/json")
-	postReq.Header.Set("Authorization", "Bearer "+token)
-	
-	postResp, err := cm.httpClient.Do(postReq)
-	if err != nil {
-		return fmt.Errorf("error creating Mattermost post: %v", err)
-	}
-	defer postResp.Body.Close()
-	
-	if postResp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(postResp.Body)
-		return fmt.Errorf("mattermost post creation error: %s - %s", postResp.Status, string(bodyBytes))
-	}
-	
-	log.Printf("Clip successfully sent to Mattermost")
-	return nil
-}
-
-// sendToDiscord sends a clip to Discord
-func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, category string, poolManagerData *PoolManagerData) error {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("could not open file for sending to Discord: %v", err)
-	}
-	defer file.Close()
-
-	// Generate message with optional category and pool manager data
-	var messageText string
-	if category != "" {
-		messageText = fmt.Sprintf("New %s Clip: %s", category, cm.formatCurrentTime())
-	} else {
-		messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
-	}
-
-	// Add team and match information if available
-	if poolManagerData != nil && len(poolManagerData.Players) == 2 {
-		messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
-			poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
-	}
-
-	// Create a multipart form for the file
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
-	
-	// Add message text with timestamp
-	if err := writer.WriteField("content", messageText); err != nil {
-		return fmt.Errorf("error adding content to Discord request: %v", err)
-	}
-	
-	// Add the file
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
-	if err != nil {
-		return fmt.Errorf("error creating file field for Discord: %v", err)
-	}
-	
-	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("error copying file to Discord request: %v", err)
-	}
-	
-	// Close the writer
-	if err := writer.Close(); err != nil {
-		return fmt.Errorf("error finalizing Discord request: %v", err)
-	}
-
-	log.Printf("Sending clip to Discord. File: %s", filepath.Base(filePath))
-
-	// Create an HTTP POST request
-	req, err := http.NewRequest("POST", webhookURL, &requestBody)
-	if err != nil {
-		return fmt.Errorf("error creating Discord request: %v", err)
-	}
-	
-	// Set the content type
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	
-	// Execute the request
-	resp, err := cm.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("error sending to Discord: %v", err)
-	}
-	defer resp.Body.Close()
-	
-	// Check the response
-	if resp.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("discord API error: %s - %s", resp.Status, string(bodyBytes))
-	}
-	
-	log.Printf("Clip successfully sent to Discord")
 	return nil
 }
 
