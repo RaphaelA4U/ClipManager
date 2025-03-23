@@ -180,8 +180,8 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	if req.BacktrackSeconds <= 0 {
-		http.Error(w, "Invalid or missing parameter: backtrack_seconds must be greater than 0", http.StatusBadRequest)
+	if req.BacktrackSeconds < 0 {
+		http.Error(w, "Invalid or missing parameter: backtrack_seconds must be 0 or greater", http.StatusBadRequest)
 		return
 	}
 	
@@ -190,13 +190,13 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	if req.BacktrackSeconds < 5 || req.BacktrackSeconds > 300 {
-		http.Error(w, "Invalid parameter: backtrack_seconds must be between 5 and 300", http.StatusBadRequest)
+	if req.BacktrackSeconds > 300 {
+		http.Error(w, "Invalid parameter: backtrack_seconds must be between 0 and 300", http.StatusBadRequest)
 		return
 	}
 	
-	if req.DurationSeconds < 5 || req.DurationSeconds > 300 {
-		http.Error(w, "Invalid parameter: duration_seconds must be between 5 and 300", http.StatusBadRequest)
+	if req.DurationSeconds < 1 || req.DurationSeconds > 300 {
+		http.Error(w, "Invalid parameter: duration_seconds must be between 1 and 300", http.StatusBadRequest)
 		return
 	}
 
