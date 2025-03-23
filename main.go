@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -294,9 +293,8 @@ func handleClipRequest(w http.ResponseWriter, r *http.Request) {
         Output(filePath, outputArgs).
         OverWriteOutput()
     
-    // Log the command (sanitized version)
-    logCmd := sanitizeLogMessage(ffmpegCmd.String())
-    log.Printf("FFmpeg command: %s", logCmd)
+    // Log the command
+    log.Printf("FFmpeg command: %s", ffmpegCmd.String())
     
     err := ffmpegCmd.Run()
     if err != nil {
@@ -402,9 +400,6 @@ func sendToTelegram(filePath, botToken, chatID string, category string) {
     // Make sure the telegram_chat_id is properly formatted (remove any quotes)
     chatID = strings.Trim(chatID, `"'`)
     
-    // Log the chat ID for debugging (sanitized)
-    log.Printf("Sending to Telegram with telegram_chat_id length: %d", len(chatID))
-    
     // Ensure telegram_chat_id is not empty
     if chatID == "" {
         log.Printf("Error: telegram_chat_id is empty, cannot send to Telegram")
@@ -414,48 +409,46 @@ func sendToTelegram(filePath, botToken, chatID string, category string) {
     reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
     client := &http.Client{Timeout: 60 * time.Second} // Increased timeout for large files
     
-    // Debug logging (without sensitive data)
-    log.Printf("Sending to Telegram. File path: %s, File size: %d bytes", 
-        filepath.Base(filePath), getFileSize(filePath))
+    log.Printf("Sending clip to Telegram. File: %s", filepath.Base(filePath))
 
     // Create the multipart form
     var requestBody bytes.Buffer
     writer := multipart.NewWriter(&requestBody)
     
-    // Add the chat_id field (using correct parameter name)
+    // Add the chat_id field
     if err := writer.WriteField("chat_id", chatID); err != nil {
-        log.Printf("Could not add chat_id to request: %v", err)
+        log.Printf("Error preparing Telegram request: %v", err)
         return
     }
     
     // Add the caption field
     if err := writer.WriteField("caption", captionText); err != nil {
-        log.Printf("Could not add caption to request: %v", err)
+        log.Printf("Error adding caption to Telegram request: %v", err)
         return
     }
     
     // Add the video file
     part, err := writer.CreateFormFile("video", filepath.Base(filePath))
     if err != nil {
-        log.Printf("Could not create file field: %v", err)
+        log.Printf("Error creating file field for Telegram: %v", err)
         return
     }
     
     if _, err := io.Copy(part, file); err != nil {
-        log.Printf("Could not copy file to request: %v", err)
+        log.Printf("Error copying file to Telegram request: %v", err)
         return
     }
     
     // Close the writer
     if err := writer.Close(); err != nil {
-        log.Printf("Could not close multipart writer: %v", err)
+        log.Printf("Error finalizing Telegram request: %v", err)
         return
     }
 
     // Create an HTTP POST request
     req, err := http.NewRequest("POST", reqURL, &requestBody)
     if err != nil {
-        log.Printf("Could not create Telegram request: %v", err)
+        log.Printf("Error creating Telegram request: %v", err)
         return
     }
     
@@ -465,7 +458,7 @@ func sendToTelegram(filePath, botToken, chatID string, category string) {
     // Execute the request
     resp, err := client.Do(req)
     if err != nil {
-        log.Printf("Error when sending to Telegram: %v", err)
+        log.Printf("Error sending clip to Telegram: %v", err)
         return
     }
     defer resp.Body.Close()
@@ -479,7 +472,7 @@ func sendToTelegram(filePath, botToken, chatID string, category string) {
         return
     }
 
-    log.Printf("Clip successfully sent to Telegram: %s", responseBody)
+    log.Printf("Clip successfully sent to Telegram")
 }
 
 // Helper function to get file size
@@ -506,35 +499,35 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string, category
     
     // Add the channel ID
     if err := writer.WriteField("channel_id", channelID); err != nil {
-        log.Printf("Could not add channel_id to request: %v", err)
+        log.Printf("Error preparing Mattermost request: %v", err)
         return
     }
     
     // Add the file
     part, err := writer.CreateFormFile("files", filepath.Base(filePath))
     if err != nil {
-        log.Printf("Could not create file field: %v", err)
+        log.Printf("Error creating file field for Mattermost: %v", err)
         return
     }
     
     if _, err := io.Copy(part, file); err != nil {
-        log.Printf("Could not copy file to request: %v", err)
+        log.Printf("Error copying file to Mattermost request: %v", err)
         return
     }
     
     // Close the writer
     if err := writer.Close(); err != nil {
-        log.Printf("Could not close multipart writer: %v", err)
+        log.Printf("Error finalizing Mattermost request: %v", err)
         return
     }
 
     // First, upload the file
     fileUploadURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
-    log.Printf("Uploading file to Mattermost: %s", fileUploadURL)
+    log.Printf("Uploading file to Mattermost")
     
     req, err := http.NewRequest("POST", fileUploadURL, &requestBody)
     if err != nil {
-        log.Printf("Could not create Mattermost file upload request: %v", err)
+        log.Printf("Error creating Mattermost upload request: %v", err)
         return
     }
     
@@ -544,7 +537,7 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string, category
     client := &http.Client{Timeout: 60 * time.Second}
     resp, err := client.Do(req)
     if err != nil {
-        log.Printf("Error when uploading to Mattermost: %v", err)
+        log.Printf("Error uploading to Mattermost: %v", err)
         return
     }
     defer resp.Body.Close()
@@ -603,7 +596,7 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string, category
     postURL := fmt.Sprintf("%s/api/v4/posts", mattermostURL)
     postReq, err := http.NewRequest("POST", postURL, bytes.NewBuffer(postJSON))
     if err != nil {
-        log.Printf("Could not create post request: %v", err)
+        log.Printf("Error creating post request: %v", err)
         return
     }
     
@@ -612,7 +605,7 @@ func sendToMattermost(filePath, mattermostURL, token, channelID string, category
     
     postResp, err := client.Do(postReq)
     if err != nil {
-        log.Printf("Error creating post: %v", err)
+        log.Printf("Error creating Mattermost post: %v", err)
         return
     }
     defer postResp.Body.Close()
@@ -649,36 +642,34 @@ func sendToDiscord(filePath, webhookURL string, category string) {
 	
 	// Add message text with timestamp
 	if err := writer.WriteField("content", messageText); err != nil {
-		log.Printf("Could not add content to request: %v", err)
+		log.Printf("Error adding content to Discord request: %v", err)
 		return
 	}
 	
 	// Add the file
 	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 	if err != nil {
-		log.Printf("Could not create file field: %v", err)
+		log.Printf("Error creating file field for Discord: %v", err)
 		return
 	}
 	
 	if _, err := io.Copy(part, file); err != nil {
-		log.Printf("Could not copy file to request: %v", err)
+		log.Printf("Error copying file to Discord request: %v", err)
 		return
 	}
 	
 	// Close the writer
 	if err := writer.Close(); err != nil {
-		log.Printf("Could not close multipart writer: %v", err)
+		log.Printf("Error finalizing Discord request: %v", err)
 		return
 	}
 
-	// Debug logging (without sensitive data)
-	log.Printf("Sending to Discord. File path: %s, File size: %d bytes", 
-		filepath.Base(filePath), getFileSize(filePath))
+	log.Printf("Sending clip to Discord. File: %s", filepath.Base(filePath))
 
 	// Create an HTTP POST request
 	req, err := http.NewRequest("POST", webhookURL, &requestBody)
 	if err != nil {
-		log.Printf("Could not create Discord request: %v", err)
+		log.Printf("Error creating Discord request: %v", err)
 		return
 	}
 	
@@ -689,7 +680,7 @@ func sendToDiscord(filePath, webhookURL string, category string) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("Error when sending to Discord: %v", err)
+		log.Printf("Error sending to Discord: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -759,45 +750,6 @@ func (mf *multipartForm) Build() (body *os.File, contentType string, err error) 
 // Helper function to format current date-time
 func formatCurrentTime() string {
 	return time.Now().Format("2006-01-02 15:04")
-}
-
-// SanitizeLogMessage removes sensitive information from log messages
-func sanitizeLogMessage(message string) string {
-    // Hide camera IP/credentials
-    re := regexp.MustCompile(`rtsp://[^@]+@[^/\s]+`)
-    message = re.ReplaceAllString(message, "rtsp://[REDACTED]@[REDACTED]")
-    
-    // Hide Telegram bot tokens (format: 123456789:ABCDEFGhijklmnopqrstuvwxyz...)
-    re = regexp.MustCompile(`\b\d+:[\w-]{35,}\b`)
-    message = re.ReplaceAllString(message, "[REDACTED-BOT-TOKEN]")
-    
-    // Hide Telegram chat IDs
-    re = regexp.MustCompile(`telegram_chat_id=(-?\d+)`)
-    message = re.ReplaceAllString(message, "telegram_chat_id=[REDACTED-CHAT-ID]")
-    
-    // Hide Mattermost tokens
-    re = regexp.MustCompile(`Bearer\s+[a-zA-Z0-9]+`)
-    message = re.ReplaceAllString(message, "Bearer [REDACTED-TOKEN]")
-    
-    // Hide Discord webhook URLs
-    re = regexp.MustCompile(`https://discord\.com/api/webhooks/[^/\s]+/[^/\s]+`)
-    message = re.ReplaceAllString(message, "https://discord.com/api/webhooks/[REDACTED]/[REDACTED]")
-    
-    return message
-}
-
-type logSanitizer struct {
-    out io.Writer
-}
-
-func (l *logSanitizer) Write(p []byte) (n int, err error) {
-    sanitized := sanitizeLogMessage(string(p))
-    return l.out.Write([]byte(sanitized))
-}
-
-func init() {
-    // Use os.Stdout directly instead of logger.Writer()
-    log.SetOutput(&logSanitizer{os.Stdout})
 }
 
 // getPoolManagerData returns simulated data from PoolManager API
