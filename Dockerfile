@@ -7,16 +7,15 @@ RUN apk add --no-cache git ca-certificates
 # Set the Current Working Directory inside the container
 WORKDIR /app
 
-# Copy go mod and sum files
-COPY go.mod go.sum ./
-
-# Download all dependencies
-RUN go mod download
-
-# Copy the source code
+# Copy entire source code first so we can initialize modules from scratch
 COPY . .
 
-# Build the Go app
+# Initialize a fresh modules setup
+RUN rm -f go.sum && \
+    go mod tidy && \
+    go mod download all
+
+# Build the Go app with dependency resolution
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
 # Stage 2: Final image with FFmpeg installed directly
@@ -27,8 +26,9 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-# Copy the binary from builder
+# Copy the binary from builder and set executable permissions
 COPY --from=builder /app/main .
+RUN chmod +x ./main
 
 # Copy static files and templates
 COPY --from=builder /app/templates/ ./templates/
@@ -42,6 +42,9 @@ RUN mkdir -p /app/clips
 
 # Expose the port
 EXPOSE 5000
+
+# Override the default ENTRYPOINT from the ffmpeg image
+ENTRYPOINT []
 
 # Command to run the executable
 CMD ["./main"]

@@ -44,7 +44,7 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
    ```
    CAMERA_IP=rtsp://username:password@your-camera-ip:port/path
    ```
-   The default ports (HOST_PORT=5001, PORT=5000) will be used if not specified.
+   The default ports (HOST_PORT=5001) will be used if not specified.
 
 3. **Start the application**:
    ```bash
@@ -62,9 +62,8 @@ ClipManager uses environment variables for configuration through the `.env` file
 |----------|-------------|----------|---------|
 | CAMERA_IP | RTSP URL of your camera | Yes | None |
 | HOST_PORT | External port to access the application | No | 5001 |
-| PORT | Internal container port | No | 5000 |
 
-**Note**: If you only specify `CAMERA_IP` in your `.env` file, the application will use the default ports (HOST_PORT=5001, PORT=5000).
+**Note**: If you only specify `CAMERA_IP` in your `.env` file, the application will use the default ports (HOST_PORT=5001).
 
 ## Using the Web Interface
 
@@ -89,96 +88,6 @@ After saving your configuration, you can access integration options:
 1. QR Code: Scan with a mobile device to trigger recording
 2. HTML Button Code: Copy embed code for websites or dashboards
 3. cURL Command: Copy command for terminal or script integration
-
-## Docker Port Configuration
-
-The ClipManager uses port 5000 inside the container, but you can map it to any port on your host machine by editing the `.env` file.
-
-### Understanding Port Mapping in Docker
-
-In the `docker-compose.yml` file, the port mapping follows this format:
-```
-"HOST_PORT:CONTAINER_PORT"
-```
-
-For example, with `"5001:5000"`:
-- `5000` - Internal container port (the app listens on this port inside Docker)
-- `5001` - Host port (you'll access the app on this port from your browser)
-
-This means you would access the application at `http://localhost:5001`.
-
-### Changing the Host Port
-
-To change the port that's accessible on your host machine, modify both:
-1. The first number in the `ports` mapping
-2. The `HOST_PORT` environment variable to match
-
-```yml
-services:
-  clipmanager:
-    # ...
-    ports:
-      - "8080:5000"  # Maps host port 8080 to container port 5000
-    environment:
-      - PORT=5000
-      - HOST_PORT=8080  # Update this to match the first number in ports
-```
-
-With this configuration:
-- The application will listen on port 5000 inside the container
-- You'll access it from your host machine at `http://localhost:8080`
-- The application logs will show the correct access URLs with port 8080
-
-### Example Port Configurations
-
-1. **Default configuration** - access on port 5001:
-   ```yml
-   ports:
-     - "5001:5000"
-   environment:
-     - PORT=5000
-     - HOST_PORT=5001
-   ```
-   Access the application at: `http://localhost:5001/api/clip`
-
-2. **Alternative port 8080** - useful if port 5001 is already in use:
-   ```yml
-   ports:
-     - "8080:5000"
-   environment:
-     - PORT=5000
-     - HOST_PORT=8080
-   ```
-   Access the application at: `http://localhost:8080/api/clip`
-
-3. **Using multiple instances** on different ports:
-   ```yml
-   # First instance in docker-compose.yml
-   ports:
-     - "8081:5000"
-   environment:
-     - PORT=5000
-     - HOST_PORT=8081
-   
-   # Second instance in another docker-compose file
-   ports:
-     - "8082:5000"
-   environment:
-     - PORT=5000
-     - HOST_PORT=8082
-   ```
-
-### Starting with a Custom Port
-
-After changing the port in `docker-compose.yml`, restart the application:
-
-```bash
-# To stop the current instance first
-docker-compose down
-
-# To start with the new configuration
-docker-compose up
-```
 
 ## Usage
 
@@ -368,28 +277,7 @@ On errors, you will receive an HTTP error status code with a descriptive error m
 
 ## Troubleshooting
 
-### Port Conflicts
-
-If you see an error like `bind: address already in use` when starting the container, port 5000 is already being used by another application on your host machine. To solve this:
-
-1. Change the host port in `docker-compose.yml`:
-   ```yml
-   ports:
-     - "8080:5000"  # Use port 8080 instead of 5000
-   ```
-
-2. Restart the application:
-   ```bash
-   docker-compose down
-   docker-compose up
-   ```
-
-3. Access the application using the new port:
-   ```
-   http://localhost:8080/api/clip
-   ```
-
-### Other Common Issues
+### Common Issues
 
 - **FFmpeg errors**: Make sure the `camera_ip` is correct and the RTSP stream is accessible.
 - **Telegram errors**: Check if the `telegram_bot_token` and `telegram_chat_id` are correct.
