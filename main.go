@@ -13,6 +13,7 @@ import (
 	// "strconv"  // Commented out since it's currently not used (PoolManager)
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
@@ -65,6 +66,8 @@ type ClipManager struct {
 	maxRetries int
 	retryDelay time.Duration
 	cameraIP   string
+	bufferFile string // Path to the continuous recording buffer file
+	recording  bool   // Flag to indicate if background recording is active
 }
 
 // NewClipManager creates a new ClipManager instance
@@ -74,6 +77,8 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
 		return nil, fmt.Errorf("failed to create directory %s: %v", tempDir, err)
 	}
 
+	bufferFile := filepath.Join(tempDir, "buffer.mp4")
+
 	return &ClipManager{
 		tempDir:    tempDir,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
@@ -82,6 +87,8 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
 		maxRetries: 3,
 		retryDelay: 5 * time.Second,
 		cameraIP:   cameraIP,
+		bufferFile: bufferFile,
+		recording:  false,
 	}, nil
 }
 
@@ -191,9 +198,10 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		}
 		*/
 		
-		// Record the clip
-		log.Printf("[%s] Starting clip recording for camera: %s", requestID, req.CameraIP)
-		err := cm.RecordClip(req.CameraIP, req.BacktrackSeconds, req.DurationSeconds, filePath)
+		// Record the clip from the buffer file instead of directly from the camera
+		log.Printf("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds", 
+			requestID, req.BacktrackSeconds, req.DurationSeconds)
+		err := cm.RecordClip(req.BacktrackSeconds, req.DurationSeconds, filePath)
 		if err != nil {
 			log.Printf("[%s] Recording error: %v", requestID, err)
 			return
@@ -283,63 +291,145 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 	return nil
 }
 
-// RecordClip records a clip using FFmpeg with retry logic for connection issues
-func (cm *ClipManager) RecordClip(cameraIP string, backtrackSeconds, durationSeconds int, outputPath string) error {
-	outputArgs := ffmpeg.KwArgs{
-		"ss":         backtrackSeconds,
-		"t":          durationSeconds,
-		"c:v":        "copy",
-		"c:a":        "copy",
-		"movflags":   "+faststart",
+// StartBackgroundRecording starts a continuous recording of the RTSP stream in the background
+// This creates a sliding window of footage that can be used for backtracking
+func (cm *ClipManager) StartBackgroundRecording() {
+	if cm.recording {
+		log.Println("Background recording is already running")
+		return
 	}
 
-	// Record the clip with FFmpeg
-	ffmpegCmd := ffmpeg.Input(cameraIP, ffmpeg.KwArgs{"rtsp_transport": "tcp"}).
+	cm.recording = true
+	
+	log.Println("Starting background recording for backtracking capability...")
+	
+	// Create a separate goroutine for continuous recording
+	go func() {
+		attempt := 1
+		for {
+			// Check available disk space before starting a new recording cycle
+			availableSpace, err := cm.CheckDiskSpace()
+			if err != nil {
+				log.Printf("Error checking disk space: %v, continuing with recording", err)
+			} else {
+				availableSpaceMB := availableSpace / (1024 * 1024)
+				log.Printf("Available disk space: %d MB", availableSpaceMB)
+				
+				// If disk space is less than 500MB, skip this recording cycle
+				if availableSpaceMB < 500 {
+					log.Printf("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
+					time.Sleep(30 * time.Second)
+					continue
+				}
+			}
+			
+			// Set up FFmpeg command for continuous recording with a fixed duration of 300 seconds
+			// Use copy codecs to maintain the original resolution (typically 1920x1080)
+			outputArgs := ffmpeg.KwArgs{
+				"t":          300, // 300 seconds (5 minutes) maximum backtrack window
+				"c:v":        "copy", // Copy video codec to maintain 1920x1080 resolution
+				"c:a":        "copy",
+				"movflags":   "+faststart",
+			}
+
+			// Record to the buffer file
+			ffmpegCmd := ffmpeg.Input(cm.cameraIP, ffmpeg.KwArgs{"rtsp_transport": "tcp"}).
+				Output(cm.bufferFile, outputArgs).
+				OverWriteOutput()
+			
+			// Log the command
+			log.Printf("Background recording FFmpeg command: %s", ffmpegCmd.String())
+			
+			// Execute the FFmpeg command
+			err = ffmpegCmd.Run()
+			
+			// Check if there was an error
+			if err != nil {
+				// If it's a connection error, retry after a delay
+				if isConnectionError(err.Error()) {
+					log.Printf("Camera disconnected, retrying connection (attempt %d)...", attempt)
+					attempt++
+					time.Sleep(10 * time.Second) // Wait 10 seconds before retrying
+					continue
+				}
+				
+				// Otherwise, log the error and continue with a new recording
+				log.Printf("Background recording error: %v", err)
+				time.Sleep(5 * time.Second) // Brief delay to avoid rapid retry loops
+				attempt++
+				continue
+			}
+			
+			// If recording completed successfully, reset the attempt counter and start a new recording
+			log.Println("Background recording cycle completed, starting next cycle...")
+			attempt = 1
+		}
+	}()
+}
+
+// CheckDiskSpace returns the available disk space in bytes for the clips directory
+func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
+	var stat syscall.Statfs_t
+	
+	// Get filesystem stats for the clips directory
+	err := syscall.Statfs(cm.tempDir, &stat)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get filesystem stats: %v", err)
+	}
+	
+	// Calculate available space in bytes
+	// Available blocks * size of block
+	availableSpace := stat.Bavail * uint64(stat.Bsize)
+	
+	return availableSpace, nil
+}
+
+// RecordClip extracts a clip from the buffer file using the specified backtrack and duration
+func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputPath string) error {
+	// Check if the buffer file exists and is valid
+	fileInfo, err := os.Stat(cm.bufferFile)
+	if err != nil {
+		return fmt.Errorf("buffer file not available, camera may be disconnected: %v", err)
+	}
+	
+	if fileInfo.Size() < 1024 {
+		return fmt.Errorf("buffer file is too small, camera may be disconnected")
+	}
+	
+	// Calculate the start time for the clip
+	// Start from the end of the buffer file, going back by backtrackSeconds
+	
+	outputArgs := ffmpeg.KwArgs{
+		"ss":         backtrackSeconds,       // Start position from the beginning of the buffer
+		"t":          durationSeconds,        // Duration of the clip
+		"c:v":        "copy",                 // Copy video codec to maintain 1920x1080 resolution
+		"c:a":        "copy",                 // Copy audio codec
+		"movflags":   "+faststart",           // Enable fast start for web playback
+	}
+
+	// Extract the clip from the buffer file
+	ffmpegCmd := ffmpeg.Input(cm.bufferFile).
 		Output(outputPath, outputArgs).
 		OverWriteOutput()
 	
 	// Log the command
-	log.Printf("FFmpeg command: %s", ffmpegCmd.String())
+	log.Printf("Clip extraction FFmpeg command: %s", ffmpegCmd.String())
 	
-	// Execute with retry logic for connection issues
-	maxFFmpegRetries := 5
-	ffmpegRetryDelay := 10 * time.Second
-	
-	var err error
-	for attempt := 1; attempt <= maxFFmpegRetries; attempt++ {
-		err = ffmpegCmd.Run()
-		
-		// If successful or not a connection issue, don't retry
-		if err == nil || !isConnectionError(err.Error()) {
-			break
-		}
-		
-		// Connection issue detected, log and retry if attempts remain
-		if attempt < maxFFmpegRetries {
-			log.Printf("Camera connection issue detected: %v", err)
-			log.Printf("Retry %d/%d for FFmpeg connection...", attempt, maxFFmpegRetries)
-			time.Sleep(ffmpegRetryDelay)
-		} else {
-			log.Printf("All %d connection retries failed for camera: %v", maxFFmpegRetries, err)
-		}
-	}
-	
+	// Execute the command
+	err = ffmpegCmd.Run()
 	if err != nil {
-		if isConnectionError(err.Error()) {
-			return fmt.Errorf("could not connect to camera after multiple attempts: %v", err)
-		}
-		return fmt.Errorf("RTSP stream may be unavailable or invalid: %v", err)
+		return fmt.Errorf("failed to extract clip from buffer: %v", err)
 	}
 
-	// Check if the file exists and is not too small
-	fileInfo, err := os.Stat(outputPath)
+	// Check if the extracted clip exists and is not too small
+	fileInfo, err = os.Stat(outputPath)
 	if err != nil {
-		return fmt.Errorf("could not access the recorded clip file: %v", err)
+		return fmt.Errorf("could not access the extracted clip file: %v", err)
 	}
 	
 	if fileInfo.Size() < 1024 {
 		os.Remove(outputPath)
-		return fmt.Errorf("recorded clip is too small, possibly no valid data received from the camera")
+		return fmt.Errorf("extracted clip is too small, possibly no valid data in the buffer for the specified time range")
 	}
 	
 	return nil
@@ -385,6 +475,7 @@ func (cm *ClipManager) CompressClipIfNeeded(filePath string) (string, error) {
 	
 	if fileInfo.Size() > 50*1024*1024 { // 50MB in bytes
 		log.Printf("File is larger than 50MB (%.2f MB), applying compression", fileSizeMB)
+		log.Printf("Reducing resolution to 1280x720 for compression")
 		
 		// Create path for compressed file
 		compressedFilePath := filepath.Join(filepath.Dir(filePath), "compressed_"+filepath.Base(filePath))
@@ -978,6 +1069,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize ClipManager: %v", err)
 	}
+	
+	// Start the background recording for backtracking capability
+	clipManager.StartBackgroundRecording()
 	
 	// Create necessary directories if they don't exist
 	os.MkdirAll("templates", 0755)

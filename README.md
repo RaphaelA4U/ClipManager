@@ -9,6 +9,8 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
 ## Features
 
 - Record clips from any RTSP camera
+- Real backtracking supported - record clips from up to 300 seconds in the past
+- Automatic camera reconnection after disconnects
 - Send clips to multiple messaging platforms simultaneously:
   - Telegram
   - Mattermost
@@ -99,7 +101,9 @@ Make a GET or POST request to the application with the following parameters:
 http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_BOT_TOKEN&telegram_chat_id=YOUR_CHAT_ID
 ```
 
-Remember to replace the host port in the URL if you've changed it in your docker-compose.yml.
+Remember to replace the host port in the URL if you've changed it in your .env file.
+
+**Note**: The camera_ip parameter is still required in requests for validation but is not used for recording since the camera is already connected at startup. Backtrack_seconds now works correctly for live RTSP streams using the continuous buffer.
 
 ### Parameters (in logical order)
 
@@ -268,22 +272,30 @@ On errors, you will receive an HTTP error status code with a descriptive error m
 
 ## Notes
 
-- The clip is stored locally in the `clips` directory and deleted after sending.
-- No database is used; the app is completely stateless.
-- The app is optimized for speed and uses a minimal Go binary with FFmpeg.
-- For maximum performance, the clip is sent asynchronously to the messaging service.
-- When compressed, the app preserves the original aspect ratio of the video.
-- Videos larger than 50MB are automatically compressed to reduce file size while maintaining quality.
+- Clips are recorded in 1920x1080 resolution for optimal quality, but may be compressed to 1280x720 if the file size exceeds 50MB
+- The clip is stored locally in the `clips` directory and deleted after sending
+- No database is used; the app is completely stateless
+- The app is optimized for speed and uses a minimal Go binary with FFmpeg
+- For maximum performance, the clip is sent asynchronously to the messaging service
+- When compressed, the app preserves the original aspect ratio of the video
+- Videos larger than 50MB are automatically compressed to reduce file size while maintaining quality
 
 ## Troubleshooting
 
 ### Common Issues
 
-- **FFmpeg errors**: Make sure the `camera_ip` is correct and the RTSP stream is accessible.
-- **Telegram errors**: Check if the `telegram_bot_token` and `telegram_chat_id` are correct.
-- **Mattermost errors**: Check if the `mattermost_url`, `mattermost_token`, and `mattermost_channel` are correct.
-- **Discord errors**: Verify that the `discord_webhook_url` is valid and correctly formatted.
+- **FFmpeg errors**: Make sure the `camera_ip` is correct and the RTSP stream is accessible
+- **Telegram errors**: Check if the `telegram_bot_token` and `telegram_chat_id` are correct
+- **Mattermost errors**: Check if the `mattermost_url`, `mattermost_token`, and `mattermost_channel` are correct
+- **Discord errors**: Verify that the `discord_webhook_url` is valid and correctly formatted
 - **Logs**: View the Docker logs for more information:
   ```bash
   docker-compose logs
   ```
+
+### Low Disk Space
+
+- If available disk space drops below 500MB, ClipManager will pause background recording
+- The application will automatically retry after 30 seconds
+- To resolve, free up disk space by removing unnecessary files
+- Background recording will resume automatically once sufficient space is available
