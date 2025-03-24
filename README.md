@@ -16,7 +16,7 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
 - Categorize clips for better organization
 - Automatic compression for large videos
 - Web interface for easy configuration
-- Integration with PoolManager for team and match information
+<!-- - Integration with PoolManager for team and match information -->
 - API endpoint for programmatic control
 - Stateless design with no database requirements
 
@@ -56,7 +56,7 @@ The ClipManager includes a user-friendly web interface accessible at the root UR
 4. Select one or more messaging platforms (Telegram, Mattermost, Discord)
 5. Enter platform-specific credentials for each selected platform
 6. Optionally add a category to organize your clips
-7. Enable PoolManager Connection if you want to include team and match information
+<!-- 7. Enable PoolManager Connection if you want to include team and match information -->
 8. Click "Save" to store your configuration
 9. Click "Record Clip" to capture and send a clip with these settings
 
@@ -206,12 +206,12 @@ Remember to replace the host port in the URL if you've changed it in your docker
 - **Description**: Categorizes clips for better organization. The category name will appear in the message sent to the selected platforms.
 - **Example**: `category=match_highlights`
 - **Required**: No
-
+<!--
 #### poolmanager_connection
 - **Description**: Enables integration with PoolManager to include team and match information in the clip metadata.
 - **Example**: `poolmanager_connection=true`
 - **Required**: No
-
+-->
 ## Using Multiple Chat Apps Simultaneously
 
 ClipManager supports sending clips to multiple platforms at once. To do this:

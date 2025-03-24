@@ -24,8 +24,8 @@ type ClipRequest struct {
 	CameraIP         string `json:"camera_ip"`
 	BacktrackSeconds int    `json:"backtrack_seconds"`
 	DurationSeconds  int    `json:"duration_seconds"`
-	ChatApp          string `json:"chat_app"` // Now supports comma-separated list: "telegram,discord,mattermost"
-	Category         string `json:"category"` // New optional category parameter
+	ChatApp          string `json:"chat_app"`
+	Category         string `json:"category"`
 	
 	// Chat app specific parameters
 	// Telegram parameters
@@ -33,14 +33,14 @@ type ClipRequest struct {
 	TelegramChatID   string `json:"telegram_chat_id"`
 	
 	// Mattermost parameters
-	MattermostURL     string `json:"mattermost_url"`     // e.g. https://mattermost.example.com
+	MattermostURL     string `json:"mattermost_url"`
 	MattermostToken   string `json:"mattermost_token"`   
 	MattermostChannel string `json:"mattermost_channel"` 
 	
 	// Discord parameters
 	DiscordWebhookURL string `json:"discord_webhook_url"`
 
-	// PoolManager integration
+	// PoolManager integration - commented out but preserved for future use
 	PoolManagerConnection bool `json:"poolmanager_connection"`
 }
 
@@ -49,6 +49,7 @@ type ClipResponse struct {
 }
 
 // PoolManagerData represents data retrieved from the PoolManager API
+// Commented out but preserved for future use
 type PoolManagerData struct {
 	Players     []string `json:"players"`
 	MatchNumber int      `json:"match_number"`
@@ -60,8 +61,8 @@ type ClipManager struct {
 	httpClient *http.Client
 	limiter    *rate.Limiter
 	hostPort   string
-	maxRetries int         // Maximum number of retry attempts
-	retryDelay time.Duration  // Delay between retry attempts
+	maxRetries int
+	retryDelay time.Duration
 }
 
 // NewClipManager creates a new ClipManager instance
@@ -76,8 +77,8 @@ func NewClipManager(tempDir string, hostPort string) (*ClipManager, error) {
 		httpClient: &http.Client{Timeout: 60 * time.Second},
 		limiter:    rate.NewLimiter(rate.Limit(1), 1),
 		hostPort:   hostPort,
-		maxRetries: 3,          // Default to 3 retries
-		retryDelay: 5 * time.Second, // Default to 5 seconds delay
+		maxRetries: 3,
+		retryDelay: 5 * time.Second,
 	}, nil
 }
 
@@ -110,7 +111,7 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		backtrackSeconds := r.URL.Query().Get("backtrack_seconds")
 		durationSeconds := r.URL.Query().Get("duration_seconds")
 		req.ChatApp = strings.ToLower(r.URL.Query().Get("chat_app"))
-		req.Category = r.URL.Query().Get("category") // Parse category parameter
+		req.Category = r.URL.Query().Get("category")
 		
 		// Chat app specific parameters
 		req.TelegramBotToken = r.URL.Query().Get("telegram_bot_token")
@@ -120,7 +121,8 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		req.MattermostChannel = r.URL.Query().Get("mattermost_channel")
 		req.DiscordWebhookURL = r.URL.Query().Get("discord_webhook_url")
 
-		// Parse PoolManager connection parameter
+		// Parse PoolManager connection parameter - commented out but preserved for future use
+		/*
 		poolManagerParam := r.URL.Query().Get("poolmanager_connection")
 		if poolManagerParam != "" {
 			var err error
@@ -130,6 +132,7 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 				req.PoolManagerConnection = false
 			}
 		}
+		*/
 
 		// Parse numeric parameters
 		if backtrackSeconds != "" {
@@ -173,7 +176,8 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 			log.Printf("[%s] Total processing time: %v", requestID, processingTime)
 		}()
 
-		// Get data from PoolManager if needed
+		// Get data from PoolManager if needed - commented out but preserved for future use
+		/*
 		var poolManagerData *PoolManagerData
 		if req.PoolManagerConnection {
 			poolManagerData = cm.getPoolManagerData()
@@ -182,6 +186,7 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 					requestID, poolManagerData.Players, poolManagerData.MatchNumber)
 			}
 		}
+		*/
 		
 		// Record the clip
 		log.Printf("[%s] Starting clip recording for camera: %s", requestID, req.CameraIP)
@@ -282,8 +287,8 @@ func (cm *ClipManager) RecordClip(cameraIP string, backtrackSeconds, durationSec
 	outputArgs := ffmpeg.KwArgs{
 		"ss":         backtrackSeconds,
 		"t":          durationSeconds,
-		"c:v":        "copy",  // Copy video without re-encoding
-		"c:a":        "copy",  // Copy audio without re-encoding
+		"c:v":        "copy",
+		"c:a":        "copy",
 		"movflags":   "+faststart",
 	}
 
@@ -332,7 +337,7 @@ func (cm *ClipManager) RecordClip(cameraIP string, backtrackSeconds, durationSec
 	}
 	
 	if fileInfo.Size() < 1024 {
-		os.Remove(outputPath) // Remove the file in case of error
+		os.Remove(outputPath)
 		return fmt.Errorf("recorded clip is too small, possibly no valid data received from the camera")
 	}
 	
@@ -475,11 +480,13 @@ func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, categor
 			captionText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
 		}
 
-		// Add team and match information if available
+		// Add team and match information if available - commented out but preserved for future use
+		/*
 		if poolManagerData != nil && len(poolManagerData.Players) == 2 {
 			captionText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
 				poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
 		}
+		*/
 
 		// Make sure the telegram_chat_id is properly formatted (remove any quotes)
 		chatID = strings.Trim(chatID, `"'`)
@@ -635,11 +642,13 @@ func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelI
 			messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
 		}
 		
-		// Add team and match information if available
+		// Add team and match information if available - commented out but preserved for future use
+		/*
 		if poolManagerData != nil && len(poolManagerData.Players) == 2 {
 			messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
 				poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
 		}
+		*/
 		
 		// Now create a post with the uploaded file
 		fileIDs := make([]string, len(fileResponse.FileInfos))
@@ -705,11 +714,13 @@ func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, category strin
 			messageText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
 		}
 
-		// Add team and match information if available
+		// Add team and match information if available - commented out but preserved for future use
+		/*
 		if poolManagerData != nil && len(poolManagerData.Players) == 2 {
 			messageText += fmt.Sprintf(" - Teams: %s vs %s - Match: %d", 
 				poolManagerData.Players[0], poolManagerData.Players[1], poolManagerData.MatchNumber)
 		}
+		*/
 
 		// Create a multipart form for the file
 		var requestBody bytes.Buffer
@@ -769,11 +780,13 @@ func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, category strin
 
 // SendToChatApp sends the clip to the appropriate chat apps
 func (cm *ClipManager) SendToChatApp(filePath string, req ClipRequest) error {
-	// Retrieve PoolManager data if the connection is enabled
-	var poolManagerData *PoolManagerData
+	// Retrieve PoolManager data if the connection is enabled - commented out but preserved for future use
+	var poolManagerData *PoolManagerData = nil
+	/*
 	if req.PoolManagerConnection {
 		poolManagerData = cm.getPoolManagerData()
 	}
+	*/
 
 	// Split the chat_app string into a list of chat apps
 	chatApps := strings.Split(strings.ToLower(req.ChatApp), ",")
@@ -833,6 +846,8 @@ func (cm *ClipManager) formatCurrentTime() string {
 }
 
 // getPoolManagerData returns simulated data from PoolManager API
+// Commented out but preserved for future use
+/*
 func (cm *ClipManager) getPoolManagerData() *PoolManagerData {
 	// Return simulated test data
 	// This is currently test data - in real implementation would fetch from PoolManager API
@@ -841,6 +856,7 @@ func (cm *ClipManager) getPoolManagerData() *PoolManagerData {
 		MatchNumber: 3,
 	}
 }
+*/
 
 // getFileSize returns the size of a file in bytes
 func (cm *ClipManager) getFileSize(filePath string) int64 {
@@ -972,7 +988,7 @@ func main() {
 // getPort gets the PORT value from environment variable or returns the default
 func getPort() string {
 	envPort := os.Getenv("PORT")
-	if envPort != "" {
+	if (envPort != "") {
 		return envPort
 	}
 	return "5000"
@@ -982,8 +998,8 @@ func getPort() string {
 // Kept outside of ClipManager since they're only used once at startup
 func getHostPort(defaultPort string) string {
 	hostPort := os.Getenv("HOST_PORT")
-	if hostPort != "" {
+	if (hostPort != "") {
 		return hostPort
 	}
-	return "5001" // Changed from defaultPort to "5001"
+	return "5001"
 }
