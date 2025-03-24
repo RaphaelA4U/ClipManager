@@ -103,16 +103,13 @@ http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port
 
 Remember to replace the host port in the URL if you've changed it in your .env file.
 
-**Note**: The camera_ip parameter is still required in requests for validation but is not used for recording since the camera is already connected at startup. Backtrack_seconds now works correctly for live RTSP streams using the continuous buffer.
-
 ### Parameters (in logical order)
 
 #### Common Parameters
 | Parameter | Description | Example | Required |
 |-----------|-------------|-----------|-----------|
-| camera_ip | The RTSP URL of the camera | rtsp://username:password@camera-ip:port/path | Yes |
-| backtrack_seconds | Number of seconds to go back for recording (5-300) | 10 | Yes |
-| duration_seconds | Duration of the clip in seconds (5-300) | 10 | Yes |
+| backtrack_seconds | Number of seconds to go back for recording (0-300) | 10 | Yes |
+| duration_seconds | Duration of the clip in seconds (1-300) | 10 | Yes |
 | chat_app | The chat app ("telegram", "mattermost", or "discord") | telegram | Yes |
 
 #### Chat App-Specific Parameters

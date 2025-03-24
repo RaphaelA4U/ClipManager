@@ -9,7 +9,9 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	// "strconv"  // Commented out since it's currently not used (PoolManager)
 	"strings"
 	"sync"
@@ -384,6 +386,32 @@ func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
 	return availableSpace, nil
 }
 
+// getBufferDuration uses ffprobe to get the duration of the buffer file in seconds
+func (cm *ClipManager) getBufferDuration() (float64, error) {
+	// Use ffprobe to get the duration of the buffer file
+	cmd := exec.Command("ffprobe", 
+		"-v", "error", 
+		"-show_entries", "format=duration", 
+		"-of", "default=noprint_wrappers=1:nokey=1", 
+		cm.bufferFile)
+	
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %v", err)
+	}
+	
+	// Parse the duration output
+	durationStr := strings.TrimSpace(out.String())
+	duration, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse duration from ffprobe output: %v", err)
+	}
+	
+	return duration, nil
+}
+
 // RecordClip extracts a clip from the buffer file using the specified backtrack and duration
 func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputPath string) error {
 	// Check if the buffer file exists and is valid
@@ -396,8 +424,53 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		return fmt.Errorf("buffer file is too small, camera may be disconnected")
 	}
 	
-	// Calculate the start time for the clip
-	// Start from the end of the buffer file, going back by backtrackSeconds
+	// Get the actual duration of the buffer file
+	bufferDuration, err := cm.getBufferDuration()
+	if err != nil {
+		return fmt.Errorf("failed to get buffer duration: %v", err)
+	}
+	
+	log.Printf("Buffer file duration: %.2f seconds", bufferDuration)
+	
+	// Store original values for logging purposes
+	originalBacktrack := backtrackSeconds
+	originalDuration := durationSeconds
+	
+	// Adjust backtrack if it exceeds buffer duration
+	if float64(backtrackSeconds) > bufferDuration {
+		backtrackSeconds = int(bufferDuration) - 1 // Leave 1 second margin
+		if backtrackSeconds < 0 {
+			backtrackSeconds = 0
+		}
+		log.Printf("Requested backtrack (%d seconds) exceeds buffer duration, adjusted to %d seconds", 
+			originalBacktrack, backtrackSeconds)
+	}
+	
+	// Check if backtrack + duration exceeds buffer duration
+	if float64(backtrackSeconds + durationSeconds) > bufferDuration {
+		// Calculate maximum possible duration
+		maxDuration := int(bufferDuration) - backtrackSeconds
+		if maxDuration < 1 {
+			// Not enough buffer, prioritize at least some duration
+			durationSeconds = 1
+			// Recalculate backtrack to fit the duration
+			maxBacktrack := int(bufferDuration) - durationSeconds
+			if maxBacktrack < 0 {
+				maxBacktrack = 0
+			}
+			backtrackSeconds = maxBacktrack
+			log.Printf("Buffer too short, adjusted backtrack to %d seconds and duration to %d seconds", 
+				backtrackSeconds, durationSeconds)
+		} else {
+			// We can keep the backtrack but need to reduce duration
+			durationSeconds = maxDuration
+			log.Printf("Requested clip length (%d seconds) exceeds buffer capacity with backtrack of %d seconds, adjusted duration to %d seconds", 
+				originalDuration, backtrackSeconds, durationSeconds)
+		}
+	}
+	
+	// Extract the clip with adjusted parameters
+	log.Printf("Extracting clip with backtrack: %d seconds, duration: %d seconds", backtrackSeconds, durationSeconds)
 	
 	outputArgs := ffmpeg.KwArgs{
 		"ss":         backtrackSeconds,       // Start position from the beginning of the buffer
@@ -421,7 +494,17 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		return fmt.Errorf("failed to extract clip from buffer: %v", err)
 	}
 
-	// Check if the extracted clip exists and is not too small
+	// Verify the extracted clip exists and has valid content
+	extractedDuration, err := cm.verifyClipDuration(outputPath)
+	if err != nil {
+		// Clean up the invalid file
+		os.Remove(outputPath)
+		return err
+	}
+	
+	log.Printf("Successfully extracted clip with duration %.2f seconds", extractedDuration)
+	
+	// Check file size as an additional verification
 	fileInfo, err = os.Stat(outputPath)
 	if err != nil {
 		return fmt.Errorf("could not access the extracted clip file: %v", err)
@@ -429,10 +512,42 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	
 	if fileInfo.Size() < 1024 {
 		os.Remove(outputPath)
-		return fmt.Errorf("extracted clip is too small, possibly no valid data in the buffer for the specified time range")
+		return fmt.Errorf("extracted clip is too small (%.2f KB), possibly no valid data in the buffer for the specified time range", 
+			float64(fileInfo.Size())/1024)
 	}
 	
 	return nil
+}
+
+// verifyClipDuration checks if the extracted clip has a valid duration
+func (cm *ClipManager) verifyClipDuration(clipPath string) (float64, error) {
+	// Use ffprobe to get the duration of the clip
+	cmd := exec.Command("ffprobe", 
+		"-v", "error", 
+		"-show_entries", "format=duration", 
+		"-of", "default=noprint_wrappers=1:nokey=1", 
+		clipPath)
+	
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("verification failed: ffprobe could not analyze clip: %v", err)
+	}
+	
+	// Parse the duration output
+	durationStr := strings.TrimSpace(out.String())
+	duration, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("verification failed: could not parse clip duration: %v", err)
+	}
+	
+	// Check if the clip has a reasonable duration
+	if duration < 0.5 { // Less than half a second is likely invalid
+		return duration, fmt.Errorf("verification failed: clip duration too short (%.2f seconds)", duration)
+	}
+	
+	return duration, nil
 }
 
 // isConnectionError checks if an error message indicates a connection issue
