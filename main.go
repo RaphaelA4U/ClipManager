@@ -17,6 +17,7 @@ import (
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
 	"golang.org/x/time/rate"
+	"github.com/joho/godotenv"
 )
 
 type ClipRequest struct {
@@ -63,10 +64,11 @@ type ClipManager struct {
 	hostPort   string
 	maxRetries int
 	retryDelay time.Duration
+	cameraIP   string
 }
 
 // NewClipManager creates a new ClipManager instance
-func NewClipManager(tempDir string, hostPort string) (*ClipManager, error) {
+func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipManager, error) {
 	// Ensure the temp directory exists
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create directory %s: %v", tempDir, err)
@@ -79,6 +81,7 @@ func NewClipManager(tempDir string, hostPort string) (*ClipManager, error) {
 		hostPort:   hostPort,
 		maxRetries: 3,
 		retryDelay: 5 * time.Second,
+		cameraIP:   cameraIP,
 	}, nil
 }
 
@@ -218,10 +221,8 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 
 // validateRequest validates the clip request parameters
 func (cm *ClipManager) validateRequest(req *ClipRequest) error {
-	// Validate common parameters
-	if req.CameraIP == "" {
-		return fmt.Errorf("missing required parameter: camera_ip")
-	}
+	// Always use the camera IP from environment config
+	req.CameraIP = cm.cameraIP
 	
 	if req.ChatApp == "" {
 		return fmt.Errorf("missing required parameter: chat_app")
@@ -951,15 +952,29 @@ func getEmbeddedHTML() string {
 func main() {
 	// Simple starting message
 	log.Println("Starting ClipManager...")
+
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: Error loading .env file: %v", err)
+	}
+	
+	// Get camera IP (required)
+	cameraIP := os.Getenv("CAMERA_IP")
+	if cameraIP == "" {
+		log.Fatal("CAMERA_IP environment variable must be set")
+	}
 	
 	// Get internal port (what the app listens on)
 	containerPort := getPort()
 	
 	// Get external port (what users connect to)
-	hostPort := getHostPort(containerPort)
+	hostPort := getHostPort()
+	if hostPort == "" {
+		log.Fatal("HOST_PORT environment variable must be set")
+	}
 	
 	// Create a new ClipManager instance
-	clipManager, err := NewClipManager("clips", hostPort)
+	clipManager, err := NewClipManager("clips", hostPort, cameraIP)
 	if err != nil {
 		log.Fatalf("Failed to initialize ClipManager: %v", err)
 	}
@@ -995,11 +1010,10 @@ func getPort() string {
 }
 
 // getHostPort determines the external port that users should connect to
-// Kept outside of ClipManager since they're only used once at startup
-func getHostPort(defaultPort string) string {
-	hostPort := os.Getenv("HOST_PORT")
-	if (hostPort != "") {
-		return hostPort
-	}
-	return "5001"
+func getHostPort() string {
+    hostPort := os.Getenv("HOST_PORT")
+    if hostPort == "" {
+        return "5001" // Default to 5001 if not specified
+    }
+    return hostPort
 }

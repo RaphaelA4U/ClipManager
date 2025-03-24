@@ -1,27 +1,12 @@
+version: '3'
+
 services:
   clipmanager:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      # PORT MAPPING: "host_port:container_port"
-      # The application listens on port 5000 inside the container
-      # Change the first number (e.g., "8080:5000") to map to a different port on your host
-      # For example:
-      # - "8080:5000" → Access the app via http://localhost:8080
-      # - "9000:5000" → Access the app via http://localhost:9000
-      - "5001:5000"
+      - "${HOST_PORT}:${PORT:-5000}"
     volumes:
       - ./clips:/app/clips
-    environment:
-      # PORT sets the internal container port the application listens on
-      # Should match the second number in the ports mapping above
-      - PORT=5000
-      # HOST_PORT represents the external port users connect to from their host machine
-      # Should match the first number in the ports mapping above
-      - HOST_PORT=5001
-    # Uncomment and modify these lines for additional configuration if needed
-    # restart: always
-    # deploy:
-    #   resources:
-    #     limits:
-    #       cpus: '1'
-    #       memory: 1G
+    restart: unless-stopped

@@ -1,48 +1,47 @@
 # Stage 1: Build the application
-FROM golang:1.21-alpine AS builder
+FROM golang:1.20-alpine AS builder
 
+# Install git and CA certificates for module downloads
+RUN apk add --no-cache git ca-certificates
+
+# Set the Current Working Directory inside the container
 WORKDIR /app
 
-# Install git (needed for go get)
-RUN apk add --no-cache git
+# Copy go mod and sum files
+COPY go.mod go.sum ./
 
-# Copy source code
+# Download all dependencies
+RUN go mod download
+
+# Copy the source code
 COPY . .
 
-# Initialize a fresh Go module
-RUN rm -f go.mod go.sum
-RUN go mod init github.com/RaphaelA4U/ClipManager
-RUN go get github.com/u2takey/ffmpeg-go@v0.5.0
-RUN go mod tidy
-
-# Build the binary
-RUN CGO_ENABLED=0 GOOS=linux go build -o clipmanager main.go
+# Build the Go app
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 
 # Stage 2: Final image with FFmpeg installed directly
-FROM alpine:3.18
+FROM jrottenberg/ffmpeg:4.4-alpine AS final
+
+# Install ca-certificates
+RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-# Install FFmpeg and dependencies directly in the final image
-RUN apk add --no-cache ffmpeg
+# Copy the binary from builder
+COPY --from=builder /app/main .
 
-# Create required directories
+# Copy static files and templates
+COPY --from=builder /app/templates/ ./templates/
+COPY --from=builder /app/static/ ./static/
+
+# Copy .env file
+COPY .env ./.env
+
+# Create directory for temporary clips
 RUN mkdir -p /app/clips
-RUN mkdir -p /app/templates
-RUN mkdir -p /app/static/css
-RUN mkdir -p /app/static/img
 
-# Copy the binary
-COPY --from=builder /app/clipmanager .
-
-# Copy templates and static files
-COPY templates/ /app/templates/
-COPY static/ /app/static/
-
-# Expose port 5000 - this is the default internal port
+# Expose the port
 EXPOSE 5000
 
-# The HOST_PORT is only for logging; the actual port mapping is handled by Docker
-ENV HOST_PORT=5001
-
-CMD ["./clipmanager"]
+# Command to run the executable
+CMD ["./main"]

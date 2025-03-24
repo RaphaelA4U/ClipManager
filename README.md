@@ -36,13 +36,35 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
    cd clipmanager
    ```
 
-2. **Start the application**:
+2. **Create environment configuration**:
+   ```bash
+   cp .env.example .env
+   ```
+   At minimum, edit the `.env` file to set your camera's RTSP URL:
+   ```
+   CAMERA_IP=rtsp://username:password@your-camera-ip:port/path
+   ```
+   The default ports (HOST_PORT=5001, PORT=5000) will be used if not specified.
+
+3. **Start the application**:
    ```bash
    docker-compose up --build
    ```
 
-3. **Access the application**:
-   By default, the application will be available at `http://localhost:5001`
+4. **Access the application**:
+   Access the application at http://localhost:5001 (or the custom port if you specified a different HOST_PORT)
+
+## Environment Configuration
+
+ClipManager uses environment variables for configuration through the `.env` file:
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| CAMERA_IP | RTSP URL of your camera | Yes | None |
+| HOST_PORT | External port to access the application | No | 5001 |
+| PORT | Internal container port | No | 5000 |
+
+**Note**: If you only specify `CAMERA_IP` in your `.env` file, the application will use the default ports (HOST_PORT=5001, PORT=5000).
 
 ## Using the Web Interface
 
@@ -50,7 +72,7 @@ The ClipManager includes a user-friendly web interface accessible at the root UR
 
 ### Configuration Tab
 
-1. Enter your camera's RTSP URL in the "Camera IP" field
+1. The camera's RTSP URL is automatically set from your `.env` file
 2. Set the desired "Backtrack Seconds" (how far back to start recording)
 3. Set the "Duration Seconds" (length of the clip)
 4. Select one or more messaging platforms (Telegram, Mattermost, Discord)
@@ -70,7 +92,7 @@ After saving your configuration, you can access integration options:
 
 ## Docker Port Configuration
 
-The ClipManager uses port 5000 inside the container, but you can map it to any port on your host machine. By default, it's mapped to port 5001.
+The ClipManager uses port 5000 inside the container, but you can map it to any port on your host machine by editing the `.env` file.
 
 ### Understanding Port Mapping in Docker
 
