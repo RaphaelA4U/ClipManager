@@ -200,6 +200,68 @@ Remember to replace the host port in the URL if you've changed it in your docker
 |-----------|-------------|-----------|-----------|
 | discord_webhook_url | The Discord webhook URL | https://discord.com/api/webhooks/id/token | Yes |
 
+### Optional Parameters
+
+#### category
+- **Description**: Categorizes clips for better organization. The category name will appear in the message sent to the selected platforms.
+- **Example**: `category=match_highlights`
+- **Required**: No
+
+#### poolmanager_connection
+- **Description**: Enables integration with PoolManager to include team and match information in the clip metadata.
+- **Example**: `poolmanager_connection=true`
+- **Required**: No
+
+## Using Multiple Chat Apps Simultaneously
+
+ClipManager supports sending clips to multiple platforms at once. To do this:
+1. Specify multiple platforms in the `chat_app` parameter, separated by commas (e.g., `telegram,mattermost,discord`).
+2. Provide credentials for all selected platforms.
+
+### Example Request for Multiple Platforms
+
+**GET Request**:
+```bash
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram,mattermost,discord&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn&discord_webhook_url=https://discord.com/api/webhooks/id/token"
+```
+
+**POST Request**:
+```bash
+curl -X POST http://localhost:5001/api/clip \
+  -H "Content-Type: application/json" \
+  -d '{
+    "camera_ip": "rtsp://username:password@camera-ip:port/path",
+    "backtrack_seconds": 10,
+    "duration_seconds": 10,
+    "chat_app": "telegram,mattermost,discord",
+    "telegram_bot_token": "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "telegram_chat_id": "-100123456789",
+    "mattermost_url": "https://mattermost.example.com",
+    "mattermost_token": "abcdefghijklmnopqrstuvwxyz",
+    "mattermost_channel": "123456789abcdefghijklmn",
+    "discord_webhook_url": "https://discord.com/api/webhooks/id/token"
+  }'
+```
+
+## Platform Setup
+
+### Telegram
+1. Create a bot using [BotFather](https://core.telegram.org/bots#botfather).
+2. Save the bot token provided by BotFather.
+3. Add the bot to a group or channel and promote it as an admin.
+4. Use the [Telegram Bot API](https://core.telegram.org/bots/api#getupdates) or a tool like [getids](https://github.com/egor-tensin/getids) to find the chat ID.
+
+### Mattermost
+1. Log in to your Mattermost server.
+2. Go to **Integrations > Bot Accounts** and create a bot account.
+3. Generate an API token for the bot.
+4. Find the channel ID by navigating to the channel and copying its URL. The channel ID is the last part of the URL.
+
+### Discord
+1. Go to your Discord server settings and create a new webhook under **Integrations > Webhooks**.
+2. Copy the webhook URL.
+3. Optionally, customize the webhook name and avatar.
+
 ### Example Requests
 
 #### Telegram
@@ -235,6 +297,33 @@ curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-i
 **GET Request**:
 ```bash
 curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=discord&discord_webhook_url=https://discord.com/api/webhooks/id/token"
+```
+
+### Updated Example Requests
+
+### Telegram, Mattermost, and Discord Combined
+
+**GET Request**:
+```bash
+curl "http://localhost:5001/api/clip?camera_ip=rtsp://username:password@camera-ip:port/path&backtrack_seconds=10&duration_seconds=10&chat_app=telegram,mattermost,discord&telegram_bot_token=123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ&telegram_chat_id=-100123456789&mattermost_url=https://mattermost.example.com&mattermost_token=abcdefghijklmnopqrstuvwxyz&mattermost_channel=123456789abcdefghijklmn&discord_webhook_url=https://discord.com/api/webhooks/id/token"
+```
+
+**POST Request**:
+```bash
+curl -X POST http://localhost:5001/api/clip \
+  -H "Content-Type: application/json" \
+  -d '{
+    "camera_ip": "rtsp://username:password@camera-ip:port/path",
+    "backtrack_seconds": 10,
+    "duration_seconds": 10,
+    "chat_app": "telegram,mattermost,discord",
+    "telegram_bot_token": "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "telegram_chat_id": "-100123456789",
+    "mattermost_url": "https://mattermost.example.com",
+    "mattermost_token": "abcdefghijklmnopqrstuvwxyz",
+    "mattermost_channel": "123456789abcdefghijklmn",
+    "discord_webhook_url": "https://discord.com/api/webhooks/id/token"
+  }'
 ```
 
 ### Response
