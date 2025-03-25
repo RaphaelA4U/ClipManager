@@ -24,6 +24,58 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// ANSI color codes
+const (
+	Reset  = "\033[0m"
+	Red    = "\033[31m"
+	Green  = "\033[32m"
+	Yellow = "\033[33m"
+	Blue   = "\033[34m"
+	Cyan   = "\033[36m"
+)
+
+// Logger struct to handle custom logging
+type Logger struct {
+	logger *log.Logger
+}
+
+// NewLogger creates a new custom logger
+func NewLogger() *Logger {
+	return &Logger{
+		logger: log.New(os.Stdout, "", log.LstdFlags),
+	}
+}
+
+// Info logs an informational message (blue with ℹ️ emoji)
+func (l *Logger) Info(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%sℹ️  %s%s%s", Blue, Cyan, msg, Reset)
+}
+
+// Success logs a success message (green with ✅ emoji)
+func (l *Logger) Success(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s✅ %s%s%s", Green, Green, msg, Reset)
+}
+
+// Warning logs a warning message (yellow with ⚠️ emoji)
+func (l *Logger) Warning(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s⚠️  %s%s%s", Yellow, Yellow, msg, Reset)
+}
+
+// Error logs an error message (red with ❌ emoji)
+func (l *Logger) Error(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s❌ %s%s%s", Red, Red, msg, Reset)
+}
+
+// Debug logs a debug message (cyan with 🔧 emoji)
+func (l *Logger) Debug(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s🔧 %s%s%s", Cyan, Cyan, msg, Reset)
+}
+
 type ClipRequest struct {
 	// Common parameters (ordered logically)
 	CameraIP         string `json:"camera_ip"`
@@ -67,19 +119,20 @@ type SegmentInfo struct {
 }
 
 type ClipManager struct {
-	tempDir        string
-	httpClient     *http.Client
-	limiter        *rate.Limiter
-	hostPort       string
-	maxRetries     int
-	retryDelay     time.Duration
-	cameraIP       string
-	segmentPattern string // Pattern for segment files
-	recording      bool   // Flag to indicate if background recording is active
-	segments       []SegmentInfo // List of available segments with timestamps
-	segmentsMutex  sync.RWMutex  // Mutex for thread-safe segments list access
-	segmentChan    chan SegmentInfo // Channel to receive new segments
+	tempDir         string
+	httpClient      *http.Client
+	limiter         *rate.Limiter
+	hostPort        string
+	maxRetries      int
+	retryDelay      time.Duration
+	cameraIP        string
+	segmentPattern  string // Pattern for segment files
+	recording       bool   // Flag to indicate if background recording is active
+	segments        []SegmentInfo // List of available segments with timestamps
+	segmentsMutex   sync.RWMutex  // Mutex for thread-safe segments list access
+	segmentChan     chan SegmentInfo // Channel to receive new segments
 	segmentDuration int // Duration of each segment in seconds
+	logger          *Logger // Custom logger for colored and emoji logs
 }
 
 // NewClipManager creates a new ClipManager instance
@@ -112,6 +165,7 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
 		segmentsMutex:   sync.RWMutex{},
 		segmentChan:     make(chan SegmentInfo, 100), // Buffered channel for new segments
 		segmentDuration: 5, // Segment duration in seconds
+		logger:          NewLogger(), // Initialize the custom logger
 	}, nil
 }
 
@@ -174,11 +228,12 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 
 	// Validate common parameters
 	if err := cm.validateRequest(&req); err != nil {
+		cm.logger.Error("Validation error: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Generate a unique filename
+	// Generate a unique filename with .mp4 extension
 	fileName := fmt.Sprintf("clip_%d.mp4", time.Now().Unix())
 	filePath := filepath.Join(cm.tempDir, fileName)
 
@@ -192,22 +247,22 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		defer func() {
 			// Log the total processing time when all operations are complete
 			processingTime := time.Since(startTime)
-			log.Printf("[%s] Total processing time: %v", requestID, processingTime)
+			cm.logger.Info("[%s] Total processing time: %v", requestID, processingTime)
 		}()
 
 		// Record the clip from the buffer file instead of directly from the camera
-		log.Printf("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds",
+		cm.logger.Info("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds",
 			requestID, req.BacktrackSeconds, req.DurationSeconds)
 		err := cm.RecordClip(req.BacktrackSeconds, req.DurationSeconds, filePath, startTime)
 		if err != nil {
-			log.Printf("[%s] Recording error: %v", requestID, err)
+			cm.logger.Error("[%s] Recording error: %v", requestID, err)
 			return
 		}
-		log.Printf("[%s] Clip recording completed", requestID)
+		cm.logger.Success("[%s] Clip recording completed", requestID)
 
 		// Send the clip to the chosen chat apps
 		if err := cm.SendToChatApp(filePath, req); err != nil {
-			log.Printf("[%s] Error sending clip: %v", requestID, err)
+			cm.logger.Error("[%s] Error sending clip: %v", requestID, err)
 		}
 
 		// Clean up the original file after sending
@@ -282,13 +337,13 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 // StartBackgroundRecording starts a continuous recording of the RTSP stream in segments
 func (cm *ClipManager) StartBackgroundRecording() {
 	if cm.recording {
-		log.Println("Background recording is already running")
+		cm.logger.Warning("Background recording is already running")
 		return
 	}
 
 	cm.recording = true
 
-	log.Println("Starting background recording with segments for backtracking capability...")
+	cm.logger.Info("Starting background recording with segments for backtracking capability...")
 
 	// Create a separate goroutine for continuous recording
 	go func() {
@@ -299,14 +354,14 @@ func (cm *ClipManager) StartBackgroundRecording() {
 			// Check available disk space before starting a new recording cycle
 			availableSpace, err := cm.CheckDiskSpace()
 			if err != nil {
-				log.Printf("Error checking disk space: %v, continuing with recording", err)
+				cm.logger.Error("Error checking disk space: %v, continuing with recording", err)
 			} else {
 				availableSpaceMB := availableSpace / (1024 * 1024)
-				log.Printf("Available disk space: %d MB", availableSpaceMB)
+				cm.logger.Info("Available disk space: %d MB", availableSpaceMB)
 
 				// If disk space is less than 500MB, skip this recording cycle
 				if availableSpaceMB < 500 {
-					log.Printf("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
+					cm.logger.Warning("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
 					time.Sleep(30 * time.Second)
 					continue
 				}
@@ -334,7 +389,7 @@ func (cm *ClipManager) StartBackgroundRecording() {
 
 			// Log the command
 			logCmd := fmt.Sprintf("ffmpeg %s", strings.Join(args, " "))
-			log.Printf("Segment recording FFmpeg command: %s", logCmd)
+			cm.logger.Debug("Segment recording FFmpeg command: %s", logCmd)
 
 			// Create the command
 			cmd := exec.Command("ffmpeg", args...)
@@ -342,14 +397,14 @@ func (cm *ClipManager) StartBackgroundRecording() {
 			// Get stderr pipe to monitor segment creation
 			stderr, err := cmd.StderrPipe()
 			if err != nil {
-				log.Printf("Error getting stderr pipe: %v", err)
+				cm.logger.Error("Error getting stderr pipe: %v", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
 			// Start the command
 			if err := cmd.Start(); err != nil {
-				log.Printf("Error starting FFmpeg: %v", err)
+				cm.logger.Error("Error starting FFmpeg: %v", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
@@ -366,7 +421,7 @@ func (cm *ClipManager) StartBackgroundRecording() {
 					matches := segmentRegex.FindStringSubmatch(line)
 					if len(matches) > 1 {
 						segmentFile := matches[1]
-						log.Printf("New segment created: %s", segmentFile)
+						cm.logger.Success("New segment created: %s", segmentFile)
 
 						// Add to segments list for backtracking
 						cm.addSegment(segmentFile)
@@ -374,7 +429,7 @@ func (cm *ClipManager) StartBackgroundRecording() {
 				}
 
 				if err := scanner.Err(); err != nil {
-					log.Printf("Error reading FFmpeg stderr: %v", err)
+					cm.logger.Error("Error reading FFmpeg stderr: %v", err)
 				}
 			}(cycle)
 
@@ -386,23 +441,23 @@ func (cm *ClipManager) StartBackgroundRecording() {
 				// Capture stderr output for better debugging
 				stderrBytes, _ := io.ReadAll(stderr)
 				errMsg := string(stderrBytes)
-				log.Printf("FFmpeg error: %v\nFFmpeg output: %s", err, errMsg)
+				cm.logger.Error("FFmpeg error: %v\nFFmpeg output: %s", err, errMsg)
 				if isConnectionError(errMsg) {
-					log.Printf("Camera disconnected, retrying connection (attempt %d)...", attempt)
+					cm.logger.Warning("Camera disconnected, retrying connection (attempt %d)...", attempt)
 					attempt++
 					time.Sleep(10 * time.Second) // Wait 10 seconds before retrying
 					continue
 				}
 
 				// Otherwise, log the error and continue with a new recording
-				log.Printf("Background recording error: %v", err)
+				cm.logger.Error("Background recording error: %v", err)
 				time.Sleep(5 * time.Second) // Brief delay to avoid rapid retry loops
 				attempt++
 				continue
 			}
 
 			// If recording completed successfully, reset the attempt counter and start a new cycle
-			log.Println("Background recording cycle completed, starting next cycle...")
+			cm.logger.Info("Background recording cycle completed, starting next cycle...")
 			attempt = 1
 			cycle++ // Increment cycle counter for unique segment names
 		}
@@ -448,8 +503,8 @@ func (cm *ClipManager) addSegment(segmentPath string) {
 		return cm.segments[i].Timestamp.Before(cm.segments[j].Timestamp)
 	})
 
-	// Keep only the last 60 segments (60 * 5 seconds = 300 seconds maximum backtrack)
-	maxSegments := 60
+	// Keep only the last 62 segments (62 * 5 seconds = 310 seconds maximum backtrack)
+	maxSegments := 62
 	if len(cm.segments) > maxSegments {
 		// Get the oldest segments to remove
 		segmentsToRemove := cm.segments[:len(cm.segments)-maxSegments]
@@ -461,9 +516,9 @@ func (cm *ClipManager) addSegment(segmentPath string) {
 		for _, oldSegment := range segmentsToRemove {
 			if _, err := os.Stat(oldSegment.Path); err == nil {
 				if err := os.Remove(oldSegment.Path); err != nil {
-					log.Printf("Error removing old segment %s: %v", oldSegment.Path, err)
+					log.Printf("❌ Error removing old segment %s: %v", oldSegment.Path, err)
 				} else {
-					log.Printf("Removed old segment: %s", oldSegment.Path)
+					log.Printf("🗑️ Removed old segment: %s", oldSegment.Path)
 				}
 			}
 		}
@@ -472,7 +527,7 @@ func (cm *ClipManager) addSegment(segmentPath string) {
 	// Send the new segment to the channel for waiting routines
 	cm.segmentChan <- segmentInfo
 
-	log.Printf("Current segments: %d (up to %d seconds of backtracking available)",
+	log.Printf("📼 Current segments: %d (up to %d seconds of backtracking available)",
 		len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
@@ -532,7 +587,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	startTime := requestTime.Add(-time.Duration(backtrackSeconds) * time.Second)
 	endTime := startTime.Add(time.Duration(durationSeconds) * time.Second)
 
-	log.Printf("Requested clip from %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+	log.Printf("📹 Requested clip from %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
 
 	// Collect the required segments
 	var neededSegments []SegmentInfo
@@ -546,10 +601,10 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		cm.segmentsMutex.RUnlock()
 
 		if len(segments) == 0 {
-			log.Println("No segments available, waiting for first segment...")
+			log.Println("⚠️ No segments available, waiting for first segment...")
 			select {
 			case newSegment := <-cm.segmentChan:
-				log.Printf("Received first segment: %s", newSegment.Path)
+				log.Printf("📼 Received first segment: %s", newSegment.Path)
 				continue
 			case <-time.After(30 * time.Second):
 				return fmt.Errorf("timeout waiting for first segment")
@@ -563,20 +618,20 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 
 		// Check if we have segments early enough for the start time
 		if startTime.Before(earliestTime) {
-			log.Printf("Requested start time %s is before earliest segment at %s", startTime.Format("15:04:05"), earliestTime.Format("15:04:05"))
+			log.Printf("⚠️ Requested start time %s is before earliest segment at %s", startTime.Format("15:04:05"), earliestTime.Format("15:04:05"))
 			// Adjust start time to the earliest available segment
 			startTime = earliestTime
 			endTime = startTime.Add(time.Duration(durationSeconds) * time.Second)
-			log.Printf("Adjusted clip time to %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+			log.Printf("🔄 Adjusted clip time to %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
 		}
 
 		// Check if we need to wait for future segments
 		if endTime.After(latestTime) {
-			log.Printf("End time %s is after latest segment at %s, waiting for more segments...", endTime.Format("15:04:05"), latestTime.Format("15:04:05"))
+			log.Printf("⏳ End time %s is after latest segment at %s, waiting for more segments...", endTime.Format("15:04:05"), latestTime.Format("15:04:05"))
 			timeout := time.After(2 * time.Duration(durationSeconds) * time.Second) // Timeout after twice the duration
 			select {
 			case newSegment := <-cm.segmentChan:
-				log.Printf("Received new segment: %s at %s", newSegment.Path, newSegment.Timestamp.Format("15:04:05"))
+				log.Printf("📼 Received new segment: %s at %s", newSegment.Path, newSegment.Timestamp.Format("15:04:05"))
 				continue
 			case <-timeout:
 				return fmt.Errorf("timeout waiting for segments to cover end time %s", endTime.Format("15:04:05"))
@@ -605,7 +660,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 			lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
 
 			if firstSegmentStart.After(startTime) || lastSegmentEnd.Before(endTime) {
-				log.Printf("Not enough segments to cover full range, waiting for more segments...")
+				log.Printf("⚠️ Not enough segments to cover full range, waiting for more segments...")
 				continue
 			}
 
@@ -614,17 +669,17 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		}
 
 		// If we get here, we didn't find any overlapping segments, wait for more
-		log.Println("No overlapping segments found, waiting for more segments...")
+		log.Println("⚠️ No overlapping segments found, waiting for more segments...")
 		select {
 		case newSegment := <-cm.segmentChan:
-			log.Printf("Received new segment: %s", newSegment.Path)
+			log.Printf("📼 Received new segment: %s", newSegment.Path)
 			continue
 		case <-time.After(30 * time.Second):
 			return fmt.Errorf("timeout waiting for overlapping segments")
 		}
 	}
 
-	log.Printf("Selected %d segments for clip", len(neededSegments))
+	log.Printf("✅ Selected %d segments for clip", len(neededSegments))
 
 	// Create a temporary file list for concat
 	concatListPath := filepath.Join(cm.tempDir, "concat_list.txt")
@@ -641,7 +696,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	}
 	concatFile.Close()
 
-	log.Printf("Created concat list at %s with %d segments", concatListPath, len(neededSegments))
+	log.Printf("📝 Created concat list at %s with %d segments", concatListPath, len(neededSegments))
 
 	// Calculate the start offset within the first segment
 	firstSegmentStart := neededSegments[0].Timestamp
@@ -653,7 +708,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	// Calculate the total duration of the clip
 	totalDuration := endTime.Sub(startTime).Seconds()
 
-	// Use FFmpeg to concatenate and trim the clip
+	// Use FFmpeg to concatenate and trim the clip, outputting as .mp4
 	args := []string{
 		"-f", "concat",
 		"-safe", "0",
@@ -667,7 +722,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		outputPath,
 	}
 
-	log.Printf("Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
+	log.Printf("🔧 Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
 	cmd := exec.Command("ffmpeg", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -684,7 +739,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		return err
 	}
 
-	log.Printf("Successfully extracted clip with duration %.2f seconds", extractedDuration)
+	log.Printf("✅ Successfully extracted clip with duration %.2f seconds", extractedDuration)
 
 	// Check file size as an additional verification
 	fileInfo, err := os.Stat(outputPath)
@@ -701,11 +756,11 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	// Get the aspect ratio of the clip and fix it if necessary
 	aspectRatio, err := cm.getVideoAspectRatio(outputPath)
 	if err != nil {
-		log.Printf("Warning: Could not determine aspect ratio of clip: %v", err)
+		log.Printf("⚠️ Warning: Could not determine aspect ratio of clip: %v", err)
 		return nil // Proceed anyway, as this is not critical
 	}
 
-	log.Printf("Detected aspect ratio of clip: %s", aspectRatio)
+	log.Printf("📏 Detected aspect ratio of clip: %s", aspectRatio)
 
 	// Re-encode the clip to explicitly set the aspect ratio
 	fixedOutputPath := filepath.Join(cm.tempDir, fmt.Sprintf("fixed_%s", filepath.Base(outputPath)))
@@ -718,24 +773,24 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		fixedOutputPath,
 	}
 
-	log.Printf("Fixing aspect ratio with FFmpeg command: ffmpeg %s", strings.Join(fixArgs, " "))
+	log.Printf("🔧 Fixing aspect ratio with FFmpeg command: ffmpeg %s", strings.Join(fixArgs, " "))
 	fixCmd := exec.Command("ffmpeg", fixArgs...)
 	var fixStderr bytes.Buffer
 	fixCmd.Stderr = &fixStderr
 	err = fixCmd.Run()
 	if err != nil {
-		log.Printf("Warning: Failed to fix aspect ratio: %v\nFFmpeg output: %s", err, fixStderr.String())
+		log.Printf("⚠️ Warning: Failed to fix aspect ratio: %v\nFFmpeg output: %s", err, fixStderr.String())
 		return nil // Proceed with the original file
 	}
 
 	// Replace the original file with the fixed one
 	if err := os.Rename(fixedOutputPath, outputPath); err != nil {
-		log.Printf("Warning: Failed to replace original file with fixed aspect ratio file: %v", err)
+		log.Printf("⚠️ Warning: Failed to replace original file with fixed aspect ratio file: %v", err)
 		os.Remove(fixedOutputPath)
 		return nil // Proceed with the original file
 	}
 
-	log.Printf("Aspect ratio fixed for clip: %s", outputPath)
+	log.Printf("✅ Aspect ratio fixed for clip: %s", outputPath)
 
 	return nil
 }
@@ -801,8 +856,8 @@ func isConnectionError(errMsg string) bool {
 func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (string, error) {
 	// Define file size limits for each chat app (in MB)
 	fileSizeLimits := map[string]float64{
-		"discord":   10.0,  // 10 MB limit for Discord
-		"telegram":  50.0,  // 50 MB limit for Telegram
+		"discord":    10.0,  // 10 MB limit for Discord
+		"telegram":   50.0,  // 50 MB limit for Telegram
 		"mattermost": 100.0, // 100 MB limit for Mattermost
 	}
 
@@ -824,11 +879,11 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 	}
 
 	fileSizeMB := float64(fileInfo.Size()) / 1024 / 1024
-	log.Printf("Original file size for %s: %.2f MB (limit: %.2f MB)", chatApp, fileSizeMB, targetSizeMB)
+	log.Printf("📏 Original file size for %s: %.2f MB (limit: %.2f MB)", chatApp, fileSizeMB, targetSizeMB)
 
 	// If the file is already under the limit, return the original path
 	if fileSizeMB <= targetSizeMB {
-		log.Printf("File size is under the limit for %s, using original file", chatApp)
+		log.Printf("✅ File size is under the limit for %s, using original file", chatApp)
 		return originalFilePath, nil
 	}
 
@@ -837,22 +892,22 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 	if err != nil {
 		return "", fmt.Errorf("could not verify clip duration: %v", err)
 	}
-	log.Printf("Clip duration for %s: %.2f seconds", chatApp, duration)
+	log.Printf("⏱️ Clip duration for %s: %.2f seconds", chatApp, duration)
 
 	// Get the aspect ratio of the original clip
 	aspectRatio, err := cm.getVideoAspectRatio(originalFilePath)
 	if err != nil {
-		log.Printf("Warning: Could not determine aspect ratio for compression: %v", err)
+		log.Printf("⚠️ Warning: Could not determine aspect ratio for compression: %v", err)
 		aspectRatio = "16:9" // Fallback to a common aspect ratio
 	}
-	log.Printf("Using aspect ratio for compression: %s", aspectRatio)
+	log.Printf("📏 Using aspect ratio for compression: %s", chatApp, aspectRatio)
 
 	// Start iterative compression
 	crf := initialCRF
 	compressedFilePath := filepath.Join(filepath.Dir(originalFilePath), fmt.Sprintf("compressed_%s_%s", chatApp, filepath.Base(originalFilePath)))
 
 	for crf <= maxCRF {
-		log.Printf("Compressing for %s with CRF %d", chatApp, crf)
+		log.Printf("🔧 Compressing for %s with CRF %d", chatApp, crf)
 
 		// FFmpeg command to compress while preserving aspect ratio
 		args := []string{
@@ -869,28 +924,28 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 			compressedFilePath,
 		}
 
-		log.Printf("Compression command for %s: ffmpeg %s", chatApp, strings.Join(args, " "))
+		log.Printf("🔧 Compression command for %s: ffmpeg %s", chatApp, strings.Join(args, " "))
 		cmd := exec.Command("ffmpeg", args...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		err = cmd.Run()
 		if err != nil {
-			log.Printf("Compression failed for %s: %v\nFFmpeg output: %s", chatApp, err, stderr.String())
+			log.Printf("❌ Compression failed for %s: %v\nFFmpeg output: %s", chatApp, err, stderr.String())
 			return originalFilePath, fmt.Errorf("compression failed: %v", err)
 		}
 
 		// Check size of compressed file
 		compressedInfo, err := os.Stat(compressedFilePath)
 		if err != nil {
-			log.Printf("Error checking compressed file for %s: %v, falling back to original", chatApp, err)
+			log.Printf("❌ Error checking compressed file for %s: %v, falling back to original", chatApp, err)
 			return originalFilePath, fmt.Errorf("could not access compressed file: %v", err)
 		}
 
 		compressedSizeMB := float64(compressedInfo.Size()) / 1024 / 1024
-		log.Printf("Compressed file size for %s: %.2f MB", chatApp, compressedSizeMB)
+		log.Printf("📏 Compressed file size for %s: %.2f MB", chatApp, compressedSizeMB)
 
 		if compressedSizeMB <= targetSizeMB {
-			log.Printf("Compression succeeded for %s with CRF %d", chatApp, crf)
+			log.Printf("✅ Compression succeeded for %s with CRF %d", chatApp, crf)
 			return compressedFilePath, nil
 		}
 
@@ -898,7 +953,7 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 		crf += crfStep
 	}
 
-	log.Printf("Could not compress file under %.2f MB for %s, even with CRF %d", targetSizeMB, chatApp, maxCRF)
+	log.Printf("❌ Could not compress file under %.2f MB for %s, even with CRF %d", targetSizeMB, chatApp, maxCRF)
 	return compressedFilePath, fmt.Errorf("file size still exceeds %.2f MB for %s after maximum compression", targetSizeMB, chatApp)
 }
 
@@ -914,11 +969,11 @@ func (cm *ClipManager) RetryOperation(operation func() error, serviceName string
 	}
 
 	// Main attempt failed, log and start retries
-	log.Printf("Error sending clip to %s: %v", serviceName, err)
+	cm.logger.Error("Error sending clip to %s: %v", serviceName, err)
 
 	// Retry logic
 	for attempt := 1; attempt <= cm.maxRetries; attempt++ {
-		log.Printf("Retry %d/%d for %s...", attempt, cm.maxRetries, serviceName)
+		cm.logger.Warning("Retry %d/%d for %s...", attempt, cm.maxRetries, serviceName)
 
 		// Wait before retrying
 		time.Sleep(cm.retryDelay)
@@ -926,15 +981,15 @@ func (cm *ClipManager) RetryOperation(operation func() error, serviceName string
 		// Try again
 		err = operation()
 		if err == nil {
-			log.Printf("Retry %d/%d for %s succeeded", attempt, cm.maxRetries, serviceName)
+			cm.logger.Success("Retry %d/%d for %s succeeded", attempt, cm.maxRetries, serviceName)
 			return nil
 		}
 
-		log.Printf("Retry %d/%d for %s failed: %v", attempt, cm.maxRetries, serviceName, err)
+		cm.logger.Error("Retry %d/%d for %s failed: %v", attempt, cm.maxRetries, serviceName, err)
 	}
 
 	// All retries failed
-	log.Printf("All %d retries failed for %s", cm.maxRetries, serviceName)
+	cm.logger.Error("All %d retries failed for %s", cm.maxRetries, serviceName)
 	return fmt.Errorf("failed to send clip to %s after %d attempts: %v", serviceName, cm.maxRetries+1, err)
 }
 
@@ -955,6 +1010,8 @@ func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, categor
 		} else {
 			captionText = fmt.Sprintf("New Clip: %s", cm.formatCurrentTime())
 		}
+		// Add note about aspect ratio distortion
+		captionText += "\n(if distorted, download and view elsewhere)"
 
 		// Make sure the telegram_chat_id is properly formatted (remove any quotes)
 		chatID = strings.Trim(chatID, `"'`)
@@ -977,7 +1034,7 @@ func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, categor
 			return fmt.Errorf("error preparing Telegram request: %v", err)
 		}
 
-		// Add the caption field
+		// Add the caption field with the note
 		if err := writer.WriteField("caption", captionText); err != nil {
 			return fmt.Errorf("error adding caption to Telegram request: %v", err)
 		}
@@ -1248,7 +1305,7 @@ func (cm *ClipManager) SendToChatApp(originalFilePath string, req ClipRequest) e
 		// Prepare the clip for this specific chat app
 		filePath, err := cm.PrepareClipForChatApp(originalFilePath, app)
 		if err != nil {
-			log.Printf("Error preparing clip for %s: %v", app, err)
+			cm.logger.Error("Error preparing clip for %s: %v", app, err)
 			errors <- fmt.Errorf("error preparing clip for %s: %v", app, err)
 			continue
 		}
@@ -1275,10 +1332,10 @@ func (cm *ClipManager) SendToChatApp(originalFilePath string, req ClipRequest) e
 			}
 
 			if err != nil {
-				log.Printf("Error sending clip to %s: %v", app, err)
+				cm.logger.Error("Error sending clip to %s: %v", app, err)
 				errors <- fmt.Errorf("error sending to %s: %v", app, err)
 			} else {
-				log.Printf("Successfully sent clip to %s", app)
+				cm.logger.Success("Successfully sent clip to %s", app)
 			}
 		}(app, filePath)
 	}
@@ -1289,7 +1346,7 @@ func (cm *ClipManager) SendToChatApp(originalFilePath string, req ClipRequest) e
 
 	// Clean up compressed files
 	for app, filePath := range compressedFiles {
-		log.Printf("Cleaning up compressed file for %s: %s", app, filePath)
+		cm.logger.Info("Cleaning up compressed file for %s: %s", app, filePath)
 		os.Remove(filePath)
 	}
 
