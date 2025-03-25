@@ -60,7 +60,12 @@ type PoolManagerData struct {
 	MatchNumber int      `json:"match_number"`
 }
 
-// ClipManager handles clip recording, processing, and dispatch to chat apps
+// SegmentInfo holds information about a recorded segment
+type SegmentInfo struct {
+	Path      string
+	Timestamp time.Time
+}
+
 type ClipManager struct {
 	tempDir        string
 	httpClient     *http.Client
@@ -71,8 +76,10 @@ type ClipManager struct {
 	cameraIP       string
 	segmentPattern string // Pattern for segment files
 	recording      bool   // Flag to indicate if background recording is active
-	segments       []string // List of available segments
-	segmentsMutex  sync.RWMutex // Mutex for thread-safe segments list access
+	segments       []SegmentInfo // List of available segments with timestamps
+	segmentsMutex  sync.RWMutex  // Mutex for thread-safe segments list access
+	segmentChan    chan SegmentInfo // Channel to receive new segments
+	segmentDuration int // Duration of each segment in seconds
 }
 
 // NewClipManager creates a new ClipManager instance
@@ -92,17 +99,19 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
 	segmentPattern := filepath.Join(absTemp, "segment_%03d.ts")
 
 	return &ClipManager{
-		tempDir:        absTemp,
-		httpClient:     &http.Client{Timeout: 60 * time.Second},
-		limiter:        rate.NewLimiter(rate.Limit(1), 1),
-		hostPort:       hostPort,
-		maxRetries:     3,
-		retryDelay:     5 * time.Second,
-		cameraIP:       cameraIP,
-		segmentPattern: segmentPattern,
-		recording:      false,
-		segments:       []string{},
-		segmentsMutex:  sync.RWMutex{},
+		tempDir:         absTemp,
+		httpClient:      &http.Client{Timeout: 60 * time.Second},
+		limiter:         rate.NewLimiter(rate.Limit(1), 1),
+		hostPort:        hostPort,
+		maxRetries:      3,
+		retryDelay:      5 * time.Second,
+		cameraIP:        cameraIP,
+		segmentPattern:  segmentPattern,
+		recording:       false,
+		segments:        []SegmentInfo{},
+		segmentsMutex:   sync.RWMutex{},
+		segmentChan:     make(chan SegmentInfo, 100), // Buffered channel for new segments
+		segmentDuration: 5, // Segment duration in seconds
 	}, nil
 }
 
@@ -189,7 +198,7 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
 		// Record the clip from the buffer file instead of directly from the camera
 		log.Printf("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds",
 			requestID, req.BacktrackSeconds, req.DurationSeconds)
-		err := cm.RecordClip(req.BacktrackSeconds, req.DurationSeconds, filePath)
+		err := cm.RecordClip(req.BacktrackSeconds, req.DurationSeconds, filePath, startTime)
 		if err != nil {
 			log.Printf("[%s] Recording error: %v", requestID, err)
 			return
@@ -227,8 +236,8 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 		return fmt.Errorf("invalid parameter: backtrack_seconds must be between 0 and 300")
 	}
 
-	if req.DurationSeconds < 1 || req.DurationSeconds > 300 {
-		return fmt.Errorf("invalid parameter: duration_seconds must be between 1 and 300")
+	if req.DurationSeconds > 300 {
+		return fmt.Errorf("invalid parameter: duration_seconds must be less than 300")
 	}
 
 	// Split the chat_app string into a list of chat apps
@@ -312,7 +321,7 @@ func (cm *ClipManager) StartBackgroundRecording() {
 				"-rtsp_transport", "tcp",
 				"-i", cm.cameraIP,
 				"-f", "segment",
-				"-segment_time", "10", // 10-second segments
+				"-segment_time", "5", // 5-second segments
 				"-segment_format", "mpegts",
 				"-reset_timestamps", "1",
 				"-segment_list", segmentList,
@@ -425,14 +434,22 @@ func (cm *ClipManager) addSegment(segmentPath string) {
 	// Construct the absolute path properly by joining tempDir and segment filename
 	absolutePath := filepath.Join(cm.tempDir, segmentPath)
 
+	// Create SegmentInfo with the current timestamp
+	segmentInfo := SegmentInfo{
+		Path:      absolutePath,
+		Timestamp: time.Now(),
+	}
+
 	// Add the segment to the list
-	cm.segments = append(cm.segments, absolutePath)
+	cm.segments = append(cm.segments, segmentInfo)
 
-	// Sort segments to ensure chronological order
-	sort.Strings(cm.segments)
+	// Sort segments by timestamp to ensure chronological order
+	sort.Slice(cm.segments, func(i, j int) bool {
+		return cm.segments[i].Timestamp.Before(cm.segments[j].Timestamp)
+	})
 
-	// Keep only the last 30 segments (30 * 10 seconds = 300 seconds maximum backtrack)
-	maxSegments := 30
+	// Keep only the last 60 segments (60 * 5 seconds = 300 seconds maximum backtrack)
+	maxSegments := 60
 	if len(cm.segments) > maxSegments {
 		// Get the oldest segments to remove
 		segmentsToRemove := cm.segments[:len(cm.segments)-maxSegments]
@@ -442,18 +459,21 @@ func (cm *ClipManager) addSegment(segmentPath string) {
 
 		// Delete the old segment files
 		for _, oldSegment := range segmentsToRemove {
-			if _, err := os.Stat(oldSegment); err == nil {
-				if err := os.Remove(oldSegment); err != nil {
-					log.Printf("Error removing old segment %s: %v", oldSegment, err)
+			if _, err := os.Stat(oldSegment.Path); err == nil {
+				if err := os.Remove(oldSegment.Path); err != nil {
+					log.Printf("Error removing old segment %s: %v", oldSegment.Path, err)
 				} else {
-					log.Printf("Removed old segment: %s", oldSegment)
+					log.Printf("Removed old segment: %s", oldSegment.Path)
 				}
 			}
 		}
 	}
 
+	// Send the new segment to the channel for waiting routines
+	cm.segmentChan <- segmentInfo
+
 	log.Printf("Current segments: %d (up to %d seconds of backtracking available)",
-		len(cm.segments), len(cm.segments)*10)
+		len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
 // getVideoAspectRatio retrieves the aspect ratio of a video file using ffprobe
@@ -507,79 +527,104 @@ func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
 }
 
 // RecordClip extracts a clip from the segments based on backtrack and duration
-func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputPath string) error {
-	// Get a copy of current segments
-	cm.segmentsMutex.RLock()
-	segments := make([]string, len(cm.segments))
-	copy(segments, cm.segments)
-	cm.segmentsMutex.RUnlock()
+func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputPath string, requestTime time.Time) error {
+	// Calculate the desired start and end times
+	startTime := requestTime.Add(-time.Duration(backtrackSeconds) * time.Second)
+	endTime := startTime.Add(time.Duration(durationSeconds) * time.Second)
 
-	if len(segments) == 0 {
-		return fmt.Errorf("no segments available for backtracking")
-	}
+	log.Printf("Requested clip from %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
 
-	// Sort segments to ensure chronological order
-	sort.Strings(segments)
+	// Collect the required segments
+	var neededSegments []SegmentInfo
 
-	log.Printf("Found %d segments for backtracking", len(segments))
+	// Wait for segments to cover the entire time range
+	for {
+		// Get a copy of current segments
+		cm.segmentsMutex.RLock()
+		segments := make([]SegmentInfo, len(cm.segments))
+		copy(segments, cm.segments)
+		cm.segmentsMutex.RUnlock()
 
-	// Calculate total available duration (assuming 10-second segments)
-	segmentDuration := 10
-	totalAvailableDuration := len(segments) * segmentDuration
+		if len(segments) == 0 {
+			log.Println("No segments available, waiting for first segment...")
+			select {
+			case newSegment := <-cm.segmentChan:
+				log.Printf("Received first segment: %s", newSegment.Path)
+				continue
+			case <-time.After(30 * time.Second):
+				return fmt.Errorf("timeout waiting for first segment")
+			}
+		}
 
-	log.Printf("Total available duration: %d seconds", totalAvailableDuration)
+		// Find the segments that cover the requested time range
+		neededSegments = []SegmentInfo{}
+		earliestTime := segments[0].Timestamp
+		latestTime := segments[len(segments)-1].Timestamp
 
-	// Store original values for logging purposes
-	originalBacktrack := backtrackSeconds
+		// Check if we have segments early enough for the start time
+		if startTime.Before(earliestTime) {
+			log.Printf("Requested start time %s is before earliest segment at %s", startTime.Format("15:04:05"), earliestTime.Format("15:04:05"))
+			// Adjust start time to the earliest available segment
+			startTime = earliestTime
+			endTime = startTime.Add(time.Duration(durationSeconds) * time.Second)
+			log.Printf("Adjusted clip time to %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+		}
 
-	// Adjust backtrack if it exceeds available duration
-	if backtrackSeconds > totalAvailableDuration {
-		backtrackSeconds = totalAvailableDuration
-		log.Printf("Requested backtrack (%d seconds) exceeds available duration, adjusted to %d seconds",
-			originalBacktrack, backtrackSeconds)
-	}
+		// Check if we need to wait for future segments
+		if endTime.After(latestTime) {
+			log.Printf("End time %s is after latest segment at %s, waiting for more segments...", endTime.Format("15:04:05"), latestTime.Format("15:04:05"))
+			timeout := time.After(2 * time.Duration(durationSeconds) * time.Second) // Timeout after twice the duration
+			select {
+			case newSegment := <-cm.segmentChan:
+				log.Printf("Received new segment: %s at %s", newSegment.Path, newSegment.Timestamp.Format("15:04:05"))
+				continue
+			case <-timeout:
+				return fmt.Errorf("timeout waiting for segments to cover end time %s", endTime.Format("15:04:05"))
+			}
+		}
 
-	// Calculate which segments to use
-	neededDuration := backtrackSeconds + durationSeconds
-	if neededDuration > totalAvailableDuration {
-		// If we can't satisfy both backtrack and duration, prioritize backtrack
-		if backtrackSeconds < totalAvailableDuration {
-			// We can satisfy backtrack but not full duration
-			durationSeconds = totalAvailableDuration - backtrackSeconds
-			log.Printf("Adjusted duration to %d seconds to fit within available segments", durationSeconds)
-		} else {
-			// We can't even satisfy backtrack, use all available segments
-			backtrackSeconds = totalAvailableDuration
-			durationSeconds = 0
-			log.Printf("Not enough segments: using all available for backtrack (%d seconds)", backtrackSeconds)
+		// Collect segments that overlap with the requested time range
+		for _, segment := range segments {
+			segmentStart := segment.Timestamp
+			segmentEnd := segmentStart.Add(time.Duration(cm.segmentDuration) * time.Second)
+
+			// Check if the segment overlaps with the requested time range
+			if segmentEnd.After(startTime) && segmentStart.Before(endTime) {
+				neededSegments = append(neededSegments, segment)
+			}
+		}
+
+		if len(neededSegments) > 0 {
+			// Sort needed segments by timestamp
+			sort.Slice(neededSegments, func(i, j int) bool {
+				return neededSegments[i].Timestamp.Before(neededSegments[j].Timestamp)
+			})
+
+			// Check if we have enough segments to cover the entire range
+			firstSegmentStart := neededSegments[0].Timestamp
+			lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
+
+			if firstSegmentStart.After(startTime) || lastSegmentEnd.Before(endTime) {
+				log.Printf("Not enough segments to cover full range, waiting for more segments...")
+				continue
+			}
+
+			// We have enough segments to proceed
+			break
+		}
+
+		// If we get here, we didn't find any overlapping segments, wait for more
+		log.Println("No overlapping segments found, waiting for more segments...")
+		select {
+		case newSegment := <-cm.segmentChan:
+			log.Printf("Received new segment: %s", newSegment.Path)
+			continue
+		case <-time.After(30 * time.Second):
+			return fmt.Errorf("timeout waiting for overlapping segments")
 		}
 	}
 
-	// Calculate segment indices
-	startSegmentIdx := len(segments) - (backtrackSeconds / segmentDuration)
-	if startSegmentIdx < 0 {
-		startSegmentIdx = 0
-	}
-
-	endSegmentIdx := startSegmentIdx + (durationSeconds / segmentDuration)
-	if endSegmentIdx >= len(segments) {
-		endSegmentIdx = len(segments) - 1
-	}
-
-	// Add one more segment to ensure we capture the full duration
-	if endSegmentIdx < len(segments)-1 {
-		endSegmentIdx++
-	}
-
-	// Get the segments we need
-	neededSegments := segments[startSegmentIdx : endSegmentIdx+1]
-
-	if len(neededSegments) == 0 {
-		return fmt.Errorf("failed to select segments for the requested time range")
-	}
-
-	log.Printf("Selected segments %d to %d (out of %d) for clip",
-		startSegmentIdx, endSegmentIdx, len(segments))
+	log.Printf("Selected %d segments for clip", len(neededSegments))
 
 	// Create a temporary file list for concat
 	concatListPath := filepath.Join(cm.tempDir, "concat_list.txt")
@@ -591,18 +636,30 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 
 	// Write the file paths to the concat list with correct relative paths
 	for _, segment := range neededSegments {
-		filename := filepath.Base(segment)
+		filename := filepath.Base(segment.Path)
 		fmt.Fprintf(concatFile, "file '%s'\n", filename)
 	}
 	concatFile.Close()
 
 	log.Printf("Created concat list at %s with %d segments", concatListPath, len(neededSegments))
 
-	// Use FFmpeg concat demuxer to merge segments with exec.Command for better error handling
+	// Calculate the start offset within the first segment
+	firstSegmentStart := neededSegments[0].Timestamp
+	startOffset := startTime.Sub(firstSegmentStart).Seconds()
+	if startOffset < 0 {
+		startOffset = 0
+	}
+
+	// Calculate the total duration of the clip
+	totalDuration := endTime.Sub(startTime).Seconds()
+
+	// Use FFmpeg to concatenate and trim the clip
 	args := []string{
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
+		"-ss", fmt.Sprintf("%.3f", startOffset), // Start offset within the first segment
+		"-t", fmt.Sprintf("%.3f", totalDuration), // Total duration of the clip
 		"-c:v", "copy",
 		"-c:a", "copy",
 		"-movflags", "+faststart",
