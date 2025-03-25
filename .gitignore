@@ -1,9 +1,6 @@
 # Ignore .env file with sensitive data
 .env
 
-# Temporary clip files
-/clips/
-
 # Binaries for programs and plugins
 *.exe
 *.exe~

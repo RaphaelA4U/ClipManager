@@ -10,6 +10,7 @@ A simple, fast and lightweight application to record clips from an RTSP camera a
 
 - Record clips from any RTSP camera
 - Real backtracking supported - record clips from up to 300 seconds in the past
+- Segment-based recording for reliable backtracking
 - Automatic camera reconnection after disconnects
 - Send clips to multiple messaging platforms simultaneously:
   - Telegram
@@ -296,3 +297,16 @@ On errors, you will receive an HTTP error status code with a descriptive error m
 - The application will automatically retry after 30 seconds
 - To resolve, free up disk space by removing unnecessary files
 - Background recording will resume automatically once sufficient space is available
+
+### Backtracking Limitations
+
+- ClipManager uses a segment-based recording system for reliable backtracking
+- Each segment is 10 seconds long, and the system maintains enough segments to cover the maximum backtrack time (300 seconds)
+- When requesting a backtrack clip:
+  - The system identifies which segments are needed and combines them
+  - If the requested backtrack time exceeds what's available, the clip will start from the earliest available segment
+  - Full backtracking capability builds up over time after ClipManager starts (about 5 minutes for full 300-second backtracking)
+- If you see errors related to backtracking:
+  - Check that ClipManager has been running long enough to build up the segment buffer
+  - Verify that there's enough disk space for segment storage
+  - Review logs for specific error details related to segment creation
