@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -9,26 +10,81 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/time/rate"
 )
 
+// ANSI color codes
+const (
+	Reset  = "\033[0m"
+	Red    = "\033[31m"
+	Green  = "\033[32m"
+	Yellow = "\033[33m"
+	Blue   = "\033[34m"
+	Cyan   = "\033[36m"
+)
+
+// Logger struct to handle custom logging
+type Logger struct {
+	logger *log.Logger
+}
+
+// NewLogger creates a new custom logger
+func NewLogger() *Logger {
+	return &Logger{
+		logger: log.New(os.Stdout, "", log.LstdFlags),
+	}
+}
+
+// Info logs an informational message (blue with ℹ️ emoji)
+func (l *Logger) Info(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%sℹ️  %s%s%s", Blue, Cyan, msg, Reset)
+}
+
+// Success logs a success message (green with ✅ emoji)
+func (l *Logger) Success(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s✅ %s%s%s", Green, Green, msg, Reset)
+}
+
+// Warning logs a warning message (yellow with ⚠️ emoji)
+func (l *Logger) Warning(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s⚠️  %s%s%s", Yellow, Yellow, msg, Reset)
+}
+
+// Error logs an error message (red with ❌ emoji)
+func (l *Logger) Error(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s❌ %s%s%s", Red, Red, msg, Reset)
+}
+
+// Debug logs a debug message (cyan with 🔧 emoji)
+func (l *Logger) Debug(format string, v ...interface{}) {
+	msg := fmt.Sprintf(format, v...)
+	l.logger.Printf("%s🔧 %s%s%s", Cyan, Cyan, msg, Reset)
+}
+
 type ClipRequest struct {
 	CameraIP          string `json:"camera_ip"`
 	BacktrackSeconds  int    `json:"backtrack_seconds"`
 	DurationSeconds   int    `json:"duration_seconds"`
-	ChatApps          string `json:"chat_app"`
+	ChatApps          string `json:"chat_app"` // Hernoemd naar ChatApps voor consistentie
 	Category          string `json:"category"`
-	Team1             string `json:"team1"`
-	Team2             string `json:"team2"`
-	AdditionalText    string `json:"additional_text"`
+	Team1             string `json:"team1"`          // Nieuw
+	Team2             string `json:"team2"`          // Nieuw
+	AdditionalText    string `json:"additional_text"` // Nieuw
 	TelegramBotToken  string `json:"telegram_bot_token"`
 	TelegramChatID    string `json:"telegram_chat_id"`
 	MattermostURL     string `json:"mattermost_url"`
@@ -60,10 +116,11 @@ type ClipManager struct {
 	segmentsMutex   sync.RWMutex
 	segmentChan     chan SegmentInfo
 	segmentDuration int
-	log             *Logger
+	log             *Logger // Gebruik 'log' consistent met nieuwe versie
 }
 
-func NewClipManager(tempDir, hostPort, cameraIP string) (*ClipManager, error) {
+// NewClipManager initializes a ClipManager with the given temp directory, host port, and camera IP.
+func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipManager, error) {
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp directory %s: %v", tempDir, err)
 	}
@@ -88,197 +145,278 @@ func NewClipManager(tempDir, hostPort, cameraIP string) (*ClipManager, error) {
 	}, nil
 }
 
+// RateLimit is a middleware that limits requests based on the ClipManager's rate limiter
+func (cm *ClipManager) RateLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !cm.limiter.Allow() {
+			http.Error(w, "Too many requests", http.StatusTooManyRequests)
+			cm.log.Error("Rate limit exceeded for IP: %s", r.RemoteAddr)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// HandleClipRequest handles HTTP requests to create and send clips
 func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request) {
-	cm.limiter.Wait(r.Context())
+	startTime := time.Now()
+	requestID := fmt.Sprintf("req_%d", time.Now().UnixNano())
 
 	var req ClipRequest
+
 	if r.Method == http.MethodGet {
 		req.CameraIP = r.URL.Query().Get("camera_ip")
-		req.BacktrackSeconds, _ = strconv.Atoi(r.URL.Query().Get("backtrack_seconds"))
-		req.DurationSeconds, _ = strconv.Atoi(r.URL.Query().Get("duration_seconds"))
+		backtrackSeconds := r.URL.Query().Get("backtrack_seconds")
+		durationSeconds := r.URL.Query().Get("duration_seconds")
 		req.ChatApps = strings.ToLower(r.URL.Query().Get("chat_app"))
 		req.Category = r.URL.Query().Get("category")
-		req.Team1 = r.URL.Query().Get("team1")
-		req.Team2 = r.URL.Query().Get("team2")
-		req.AdditionalText = r.URL.Query().Get("additional_text")
+		req.Team1 = r.URL.Query().Get("team1")           // Nieuw
+		req.Team2 = r.URL.Query().Get("team2")           // Nieuw
+		req.AdditionalText = r.URL.Query().Get("additional_text") // Nieuw
 		req.TelegramBotToken = r.URL.Query().Get("telegram_bot_token")
 		req.TelegramChatID = r.URL.Query().Get("telegram_chat_id")
 		req.MattermostURL = r.URL.Query().Get("mattermost_url")
 		req.MattermostToken = r.URL.Query().Get("mattermost_token")
 		req.MattermostChannel = r.URL.Query().Get("mattermost_channel")
 		req.DiscordWebhookURL = r.URL.Query().Get("discord_webhook_url")
+
+		if backtrackSeconds != "" {
+			fmt.Sscanf(backtrackSeconds, "%d", &req.BacktrackSeconds)
+		}
+		if durationSeconds != "" {
+			fmt.Sscanf(durationSeconds, "%d", &req.DurationSeconds)
+		}
 	} else if r.Method == http.MethodPost {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+	} else {
+		http.Error(w, "Method not allowed, use GET or POST", http.StatusMethodNotAllowed)
+		return
 	}
 
-	if err := cm.validateRequest(req); err != nil {
+	if err := cm.validateRequest(&req); err != nil {
+		cm.log.Error("Validation error: %v", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	fileName := fmt.Sprintf("clip_%d.mp4", time.Now().Unix())
+	filePath := filepath.Join(cm.tempDir, fileName)
+
+	response := ClipResponse{Message: "Clip recording and sending started"}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+
 	go func() {
-		fileName := fmt.Sprintf("clip_%d.mp4", time.Now().Unix())
-		outputPath := filepath.Join(cm.tempDir, fileName)
-		if err := cm.RecordClip(req.BacktrackSeconds, req.DurationSeconds, outputPath, time.Now()); err != nil {
-			cm.log.Error("Failed to record clip: %v", err)
+		defer func() {
+			processingTime := time.Since(startTime)
+			cm.log.Info("[%s] Total processing time: %v", requestID, processingTime)
+		}()
+
+		cm.log.Info("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds",
+			requestID, req.BacktrackSeconds, req.DurationSeconds)
+		err := cm.RecordClip(req.BacktrackSeconds, req.DurationSeconds, filePath, startTime)
+		if err != nil {
+			cm.log.Error("[%s] Recording error: %v", requestID, err)
 			return
 		}
-		cm.PrepareClipForChatApp(outputPath, req)
-	}()
+		cm.log.Success("[%s] Clip recording completed", requestID)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ClipResponse{Message: "Clip recording and sending started"})
+		if err := cm.SendToChatApp(filePath, req); err != nil {
+			cm.log.Error("[%s] Error sending clip: %v", requestID, err)
+		}
+
+		os.Remove(filePath)
+	}()
 }
 
-func (cm *ClipManager) validateRequest(req ClipRequest) error {
-	if req.CameraIP == "" {
-		req.CameraIP = cm.cameraIP
+// validateRequest validates the clip request parameters
+func (cm *ClipManager) validateRequest(req *ClipRequest) error {
+	req.CameraIP = cm.cameraIP
+
+	if req.ChatApps == "" {
+		return fmt.Errorf("missing required parameter: chat_app")
 	}
-	if req.CameraIP == "" {
-		return fmt.Errorf("camera_ip is required")
+
+	if req.BacktrackSeconds < 0 {
+		return fmt.Errorf("invalid or missing parameter: backtrack_seconds must be 0 or greater")
 	}
-	if req.BacktrackSeconds < 0 || req.BacktrackSeconds > 300 {
-		return fmt.Errorf("backtrack_seconds must be between 0 and 300")
+
+	if req.DurationSeconds <= 0 {
+		return fmt.Errorf("invalid or missing parameter: duration_seconds must be greater than 0")
 	}
-	if req.DurationSeconds <= 0 || req.DurationSeconds > 300 {
-		return fmt.Errorf("duration_seconds must be between 1 and 300")
+
+	if req.BacktrackSeconds > 300 {
+		return fmt.Errorf("invalid parameter: backtrack_seconds must be between 0 and 300")
 	}
+
+	if req.DurationSeconds > 300 {
+		return fmt.Errorf("invalid parameter: duration_seconds must be less than 300")
+	}
+
+	chatApps := strings.Split(strings.ToLower(req.ChatApps), ",")
+
+	for _, app := range chatApps {
+		app = strings.TrimSpace(app)
+
+		switch app {
+		case "telegram":
+			if req.TelegramBotToken == "" {
+				return fmt.Errorf("missing required parameter for Telegram: telegram_bot_token")
+			}
+			if req.TelegramChatID == "" {
+				return fmt.Errorf("missing required parameter for Telegram: telegram_chat_id")
+			}
+		case "mattermost":
+			if req.MattermostURL == "" {
+				return fmt.Errorf("missing required parameter for Mattermost: mattermost_url")
+			}
+			if req.MattermostToken == "" {
+				return fmt.Errorf("missing required parameter for Mattermost: mattermost_token")
+			}
+			if req.MattermostChannel == "" {
+				return fmt.Errorf("missing required parameter for Mattermost: mattermost_channel")
+			}
+			req.MattermostURL = strings.TrimSuffix(req.MattermostURL, "/")
+		case "discord":
+			if req.DiscordWebhookURL == "" {
+				return fmt.Errorf("missing required parameter for Discord: discord_webhook_url")
+			}
+		default:
+			return fmt.Errorf("invalid chat_app parameter '%s'. Supported values are: 'telegram', 'mattermost', or 'discord'", app)
+		}
+	}
+
 	return nil
 }
 
 // StartBackgroundRecording starts a continuous recording of the RTSP stream in segments
 func (cm *ClipManager) StartBackgroundRecording() {
 	if cm.recording {
-		cm.logger.Warning("Background recording is already running")
+		cm.log.Warning("Background recording is already running")
 		return
 	}
 
 	cm.recording = true
 
-	cm.logger.Info("Starting background recording with segments for backtracking capability...")
+	cm.log.Info("Starting background recording with segments for backtracking capability...")
 
-	// Create a separate goroutine for continuous recording
 	go func() {
 		attempt := 1
-		cycle := 0 // Counter for recording cycles to ensure unique segment names
+		cycle := 0
 
 		for {
-			// Check available disk space before starting a new recording cycle
 			availableSpace, err := cm.CheckDiskSpace()
 			if err != nil {
-				cm.logger.Error("Error checking disk space: %v, continuing with recording", err)
+				cm.log.Error("Error checking disk space: %v, continuing with recording", err)
 			} else {
 				availableSpaceMB := availableSpace / (1024 * 1024)
-				cm.logger.Info("Available disk space: %d MB", availableSpaceMB)
+				cm.log.Info("Available disk space: %d MB", availableSpaceMB)
 
-				// If disk space is less than 500MB, skip this recording cycle
 				if availableSpaceMB < 500 {
-					cm.logger.Warning("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
+					cm.log.Warning("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
 					time.Sleep(30 * time.Second)
 					continue
 				}
 			}
 
-			// Generate a unique segment pattern for this cycle
 			segmentPattern := fmt.Sprintf("%s_cycle%d_%%03d.ts", strings.TrimSuffix(cm.segmentPattern, "_%03d.ts"), cycle)
 			segmentList := filepath.Join(cm.tempDir, fmt.Sprintf("segments_cycle%d.m3u8", cycle))
 
-			// Create FFmpeg command line
 			args := []string{
 				"-rtsp_transport", "tcp",
 				"-i", cm.cameraIP,
 				"-f", "segment",
-				"-segment_time", "5", // 5-second segments
+				"-segment_time", "5",
 				"-segment_format", "mpegts",
 				"-reset_timestamps", "1",
 				"-segment_list", segmentList,
 				"-segment_list_type", "m3u8",
-				"-c:v", "copy", // Copy video codec to maintain original resolution
-				"-c:a", "copy", // Copy audio codec
-				"-y",           // Overwrite output files without asking
+				"-c:v", "copy",
+				"-c:a", "copy",
+				"-y",
 				segmentPattern,
 			}
 
-			// Log the command
 			logCmd := fmt.Sprintf("ffmpeg %s", strings.Join(args, " "))
-			cm.logger.Debug("Segment recording FFmpeg command: %s", logCmd)
+			cm.log.Debug("Segment recording FFmpeg command: %s", logCmd)
 
-			// Create the command
 			cmd := exec.Command("ffmpeg", args...)
 
-			// Get stderr pipe to monitor segment creation
 			stderr, err := cmd.StderrPipe()
 			if err != nil {
-				cm.logger.Error("Error getting stderr pipe: %v", err)
+				cm.log.Error("Error getting stderr pipe: %v", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			// Start the command
 			if err := cmd.Start(); err != nil {
-				cm.logger.Error("Error starting FFmpeg: %v", err)
+				cm.log.Error("Error starting FFmpeg: %v", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			// Start a goroutine to scan stderr for segment creation messages
 			go func(cycle int) {
 				scanner := bufio.NewScanner(stderr)
-				// Update regex to capture the filename with cycle suffix
 				segmentRegex := regexp.MustCompile(fmt.Sprintf(`Opening '.*/(segment_cycle%d_\d+\.ts)' for writing`, cycle))
 
 				for scanner.Scan() {
 					line := scanner.Text()
-					// Look for segment creation messages
 					matches := segmentRegex.FindStringSubmatch(line)
 					if len(matches) > 1 {
 						segmentFile := matches[1]
-						cm.logger.Success("New segment created: %s", segmentFile)
-
-						// Add to segments list for backtracking
+						cm.log.Success("New segment created: %s", segmentFile)
 						cm.addSegment(segmentFile)
 					}
 				}
 
 				if err := scanner.Err(); err != nil {
-					cm.logger.Error("Error reading FFmpeg stderr: %v", err)
+					cm.log.Error("Error reading FFmpeg stderr: %v", err)
 				}
 			}(cycle)
 
-			// Wait for the command to complete
 			err = cmd.Wait()
 
-			// Check if there was an error
 			if err != nil {
-				// Capture stderr output for better debugging
 				stderrBytes, _ := io.ReadAll(stderr)
 				errMsg := string(stderrBytes)
-				cm.logger.Error("FFmpeg error: %v\nFFmpeg output: %s", err, errMsg)
+				cm.log.Error("FFmpeg error: %v\nFFmpeg output: %s", err, errMsg)
 				if isConnectionError(errMsg) {
-					cm.logger.Warning("Camera disconnected, retrying connection (attempt %d)...", attempt)
+					cm.log.Warning("Camera disconnected, retrying connection (attempt %d)...", attempt)
 					attempt++
-					time.Sleep(10 * time.Second) // Wait 10 seconds before retrying
+					time.Sleep(10 * time.Second)
 					continue
 				}
 
-				// Otherwise, log the error and continue with a new recording
-				cm.logger.Error("Background recording error: %v", err)
-				time.Sleep(5 * time.Second) // Brief delay to avoid rapid retry loops
+				cm.log.Error("Background recording error: %v", err)
+				time.Sleep(5 * time.Second)
 				attempt++
 				continue
 			}
 
-			// If recording completed successfully, reset the attempt counter and start a new cycle
-			cm.logger.Info("Background recording cycle completed, starting next cycle...")
+			cm.log.Info("Background recording cycle completed, starting next cycle...")
 			attempt = 1
-			cycle++ // Increment cycle counter for unique segment names
+			cycle++
 		}
 	}()
 }
 
+// CheckDiskSpace returns the available disk space in bytes for the clips directory
+func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
+	var stat syscall.Statfs_t
+
+	err := syscall.Statfs(cm.tempDir, &stat)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get filesystem stats: %v", err)
+	}
+
+	availableSpace := stat.Bavail * uint64(stat.Bsize)
+	return availableSpace, nil
+}
+
+// addSegment appends a new segment to the segment list and maintains a maximum of 62 segments (310 seconds).
 func (cm *ClipManager) addSegment(segmentPath string) {
 	cm.segmentsMutex.Lock()
 	defer cm.segmentsMutex.Unlock()
@@ -310,107 +448,141 @@ func (cm *ClipManager) addSegment(segmentPath string) {
 	cm.log.Info("Added segment: %s, total: %d (up to %d seconds)", segmentPath, len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
+// getVideoAspectRatio retrieves the aspect ratio of a video file using ffprobe
+func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height",
+		"-of", "json",
+		filePath)
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffprobe failed to get video dimensions: %v", err)
+	}
+
+	var result struct {
+		Streams []struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"streams"`
+	}
+
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		return "", fmt.Errorf("failed to parse ffprobe output: %v", err)
+	}
+
+	if len(result.Streams) == 0 {
+		return "", fmt.Errorf("no video stream found in file")
+	}
+
+	width := result.Streams[0].Width
+	height := result.Streams[0].Height
+
+	if width == 0 || height == 0 {
+		return "", fmt.Errorf("invalid video dimensions: width=%d, height=%d", width, height)
+	}
+
+	gcd := func(a, b int) int {
+		for b != 0 {
+			a, b = b, a%b
+		}
+		return a
+	}
+	divisor := gcd(width, height)
+	aspectRatio := fmt.Sprintf("%d:%d", width/divisor, height/divisor)
+
+	return aspectRatio, nil
+}
+
 // RecordClip extracts a clip from the segments based on backtrack and duration
 func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputPath string, requestTime time.Time) error {
-	// Calculate the desired start and end times
 	startTime := requestTime.Add(-time.Duration(backtrackSeconds) * time.Second)
 	endTime := startTime.Add(time.Duration(durationSeconds) * time.Second)
 
-	log.Printf("📹 Requested clip from %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+	cm.log.Info("📹 Requested clip from %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
 
-	// Collect the required segments
 	var neededSegments []SegmentInfo
 
-	// Wait for segments to cover the entire time range
 	for {
-		// Get a copy of current segments
 		cm.segmentsMutex.RLock()
 		segments := make([]SegmentInfo, len(cm.segments))
 		copy(segments, cm.segments)
 		cm.segmentsMutex.RUnlock()
 
 		if len(segments) == 0 {
-			log.Println("⚠️ No segments available, waiting for first segment...")
+			cm.log.Warning("⚠️ No segments available, waiting for first segment...")
 			select {
 			case newSegment := <-cm.segmentChan:
-				log.Printf("📼 Received first segment: %s", newSegment.Path)
+				cm.log.Info("📼 Received first segment: %s", newSegment.Path)
 				continue
 			case <-time.After(30 * time.Second):
 				return fmt.Errorf("timeout waiting for first segment")
 			}
 		}
 
-		// Find the segments that cover the requested time range
 		neededSegments = []SegmentInfo{}
 		earliestTime := segments[0].Timestamp
 		latestTime := segments[len(segments)-1].Timestamp
 
-		// Check if we have segments early enough for the start time
 		if startTime.Before(earliestTime) {
-			log.Printf("⚠️ Requested start time %s is before earliest segment at %s", startTime.Format("15:04:05"), earliestTime.Format("15:04:05"))
-			// Adjust start time to the earliest available segment
+			cm.log.Warning("⚠️ Requested start time %s is before earliest segment at %s", startTime.Format("15:04:05"), earliestTime.Format("15:04:05"))
 			startTime = earliestTime
 			endTime = startTime.Add(time.Duration(durationSeconds) * time.Second)
-			log.Printf("🔄 Adjusted clip time to %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+			cm.log.Info("🔄 Adjusted clip time to %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
 		}
 
-		// Check if we need to wait for future segments
 		if endTime.After(latestTime) {
-			log.Printf("⏳ End time %s is after latest segment at %s, waiting for more segments...", endTime.Format("15:04:05"), latestTime.Format("15:04:05"))
-			timeout := time.After(2 * time.Duration(durationSeconds) * time.Second) // Timeout after twice the duration
+			cm.log.Info("⏳ End time %s is after latest segment at %s, waiting for more segments...", endTime.Format("15:04:05"), latestTime.Format("15:04:05"))
+			timeout := time.After(2 * time.Duration(durationSeconds) * time.Second)
 			select {
 			case newSegment := <-cm.segmentChan:
-				log.Printf("📼 Received new segment: %s at %s", newSegment.Path, newSegment.Timestamp.Format("15:04:05"))
+				cm.log.Info("📼 Received new segment: %s at %s", newSegment.Path, newSegment.Timestamp.Format("15:04:05"))
 				continue
 			case <-timeout:
 				return fmt.Errorf("timeout waiting for segments to cover end time %s", endTime.Format("15:04:05"))
 			}
 		}
 
-		// Collect segments that overlap with the requested time range
 		for _, segment := range segments {
 			segmentStart := segment.Timestamp
 			segmentEnd := segmentStart.Add(time.Duration(cm.segmentDuration) * time.Second)
 
-			// Check if the segment overlaps with the requested time range
 			if segmentEnd.After(startTime) && segmentStart.Before(endTime) {
 				neededSegments = append(neededSegments, segment)
 			}
 		}
 
 		if len(neededSegments) > 0 {
-			// Sort needed segments by timestamp
 			sort.Slice(neededSegments, func(i, j int) bool {
 				return neededSegments[i].Timestamp.Before(neededSegments[j].Timestamp)
 			})
 
-			// Check if we have enough segments to cover the entire range
 			firstSegmentStart := neededSegments[0].Timestamp
 			lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
 
 			if firstSegmentStart.After(startTime) || lastSegmentEnd.Before(endTime) {
-				log.Printf("⚠️ Not enough segments to cover full range, waiting for more segments...")
+				cm.log.Warning("⚠️ Not enough segments to cover full range, waiting for more segments...")
 				continue
 			}
 
-			// We have enough segments to proceed
 			break
 		}
 
-		// If we get here, we didn't find any overlapping segments, wait for more
-		log.Println("⚠️ No overlapping segments found, waiting for more segments...")
+		cm.log.Warning("⚠️ No overlapping segments found, waiting for more segments...")
 		select {
 		case newSegment := <-cm.segmentChan:
-			log.Printf("📼 Received new segment: %s", newSegment.Path)
+			cm.log.Info("📼 Received new segment: %s", newSegment.Path)
 			continue
 		case <-time.After(30 * time.Second):
 			return fmt.Errorf("timeout waiting for overlapping segments")
 		}
 	}
 
-	log.Printf("✅ Selected %d segments for clip", len(neededSegments))
+	cm.log.Success("✅ Selected %d segments for clip", len(neededSegments))
 
-	// Create a temporary file list for concat
 	concatListPath := filepath.Join(cm.tempDir, "concat_list.txt")
 	concatFile, err := os.Create(concatListPath)
 	if err != nil {
@@ -418,32 +590,28 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	}
 	defer os.Remove(concatListPath)
 
-	// Write the file paths to the concat list with correct relative paths
 	for _, segment := range neededSegments {
 		filename := filepath.Base(segment.Path)
 		fmt.Fprintf(concatFile, "file '%s'\n", filename)
 	}
 	concatFile.Close()
 
-	log.Printf("📝 Created concat list at %s with %d segments", concatListPath, len(neededSegments))
+	cm.log.Info("📝 Created concat list at %s with %d segments", concatListPath, len(neededSegments))
 
-	// Calculate the start offset within the first segment
 	firstSegmentStart := neededSegments[0].Timestamp
 	startOffset := startTime.Sub(firstSegmentStart).Seconds()
 	if startOffset < 0 {
 		startOffset = 0
 	}
 
-	// Calculate the total duration of the clip
 	totalDuration := endTime.Sub(startTime).Seconds()
 
-	// Use FFmpeg to concatenate and trim the clip, outputting as .mp4
 	args := []string{
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
-		"-ss", fmt.Sprintf("%.3f", startOffset), // Start offset within the first segment
-		"-t", fmt.Sprintf("%.3f", totalDuration), // Total duration of the clip
+		"-ss", fmt.Sprintf("%.3f", startOffset),
+		"-t", fmt.Sprintf("%.3f", totalDuration),
 		"-c:v", "copy",
 		"-c:a", "copy",
 		"-movflags", "+faststart",
@@ -451,7 +619,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		outputPath,
 	}
 
-	log.Printf("🔧 Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
+	cm.log.Debug("🔧 Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
 	cmd := exec.Command("ffmpeg", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -460,17 +628,14 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		return fmt.Errorf("failed to extract clip from segments: %v\nFFmpeg output: %s", err, stderr.String())
 	}
 
-	// Verify the extracted clip exists and has valid content
 	extractedDuration, err := cm.verifyClipDuration(outputPath)
 	if err != nil {
-		// Clean up the invalid file
 		os.Remove(outputPath)
 		return err
 	}
 
-	log.Printf("✅ Successfully extracted clip with duration %.2f seconds", extractedDuration)
+	cm.log.Success("✅ Successfully extracted clip with duration %.2f seconds", extractedDuration)
 
-	// Check file size as an additional verification
 	fileInfo, err := os.Stat(outputPath)
 	if err != nil {
 		return fmt.Errorf("could not access the extracted clip file: %v", err)
@@ -478,20 +643,17 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 
 	if fileInfo.Size() < 1024 {
 		os.Remove(outputPath)
-		return fmt.Errorf("extracted clip is too small (%.2f KB), possibly no valid data in the segments",
-			float64(fileInfo.Size())/1024)
+		return fmt.Errorf("extracted clip is too small (%.2f KB), possibly no valid data in the segments", float64(fileInfo.Size())/1024)
 	}
 
-	// Get the aspect ratio of the clip and fix it if necessary
 	aspectRatio, err := cm.getVideoAspectRatio(outputPath)
 	if err != nil {
-		log.Printf("⚠️ Warning: Could not determine aspect ratio of clip: %v", err)
-		return nil // Proceed anyway, as this is not critical
+		cm.log.Warning("⚠️ Warning: Could not determine aspect ratio of clip: %v", err)
+		return nil
 	}
 
-	log.Printf("📏 Detected aspect ratio of clip: %s", aspectRatio)
+	cm.log.Info("📏 Detected aspect ratio of clip: %s", aspectRatio)
 
-	// Re-encode the clip to explicitly set the aspect ratio
 	fixedOutputPath := filepath.Join(cm.tempDir, fmt.Sprintf("fixed_%s", filepath.Base(outputPath)))
 	fixArgs := []string{
 		"-i", outputPath,
@@ -502,234 +664,512 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		fixedOutputPath,
 	}
 
-	log.Printf("🔧 Fixing aspect ratio with FFmpeg command: ffmpeg %s", strings.Join(fixArgs, " "))
+	cm.log.Debug("🔧 Fixing aspect ratio with FFmpeg command: ffmpeg %s", strings.Join(fixArgs, " "))
 	fixCmd := exec.Command("ffmpeg", fixArgs...)
 	var fixStderr bytes.Buffer
 	fixCmd.Stderr = &fixStderr
 	err = fixCmd.Run()
 	if err != nil {
-		log.Printf("⚠️ Warning: Failed to fix aspect ratio: %v\nFFmpeg output: %s", err, fixStderr.String())
-		return nil // Proceed with the original file
+		cm.log.Warning("⚠️ Warning: Failed to fix aspect ratio: %v\nFFmpeg output: %s", err, fixStderr.String())
+		return nil
 	}
 
-	// Replace the original file with the fixed one
 	if err := os.Rename(fixedOutputPath, outputPath); err != nil {
-		log.Printf("⚠️ Warning: Failed to replace original file with fixed aspect ratio file: %v", err)
+		cm.log.Warning("⚠️ Warning: Failed to replace original file with fixed aspect ratio file: %v", err)
 		os.Remove(fixedOutputPath)
-		return nil // Proceed with the original file
+		return nil
 	}
 
-	log.Printf("✅ Aspect ratio fixed for clip: %s", outputPath)
-
+	cm.log.Success("✅ Aspect ratio fixed for clip: %s", outputPath)
 	return nil
 }
 
-func (cm *ClipManager) PrepareClipForChatApp(filePath string, req ClipRequest) {
-	chatApps := strings.Split(req.ChatApps, ",")
-	for _, app := range chatApps {
-		app = strings.TrimSpace(app)
-		switch app {
-		case "telegram":
-			if err := cm.sendToTelegram(filePath, req.TelegramBotToken, req.TelegramChatID, req); err != nil {
-				cm.log.Error("Failed to send to Telegram: %v", err)
-			}
-		case "mattermost":
-			if err := cm.sendToMattermost(filePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req); err != nil {
-				cm.log.Error("Failed to send to Mattermost: %v", err)
-			}
-		case "discord":
-			if err := cm.sendToDiscord(filePath, req.DiscordWebhookURL, req); err != nil {
-				cm.log.Error("Failed to send to Discord: %v", err)
-			}
-		}
+// verifyClipDuration checks if the extracted clip has a valid duration
+func (cm *ClipManager) verifyClipDuration(filePath string) (float64, error) {
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		filePath)
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+
+	if err := cmd.Run(); err != nil {
+		return 0, fmt.Errorf("verification failed: ffprobe could not analyze clip: %v", err)
 	}
+
+	durationStr := strings.TrimSpace(out.String())
+	duration, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, fmt.Errorf("verification failed: could not parse clip duration: %v", err)
+	}
+
+	if duration < 0.5 {
+		return duration, fmt.Errorf("verification failed: clip duration too short (%.2f seconds)", duration)
+	}
+
+	return duration, nil
 }
 
+// isConnectionError checks if an error message indicates a connection issue
+func isConnectionError(errMsg string) bool {
+	connectionErrors := []string{
+		"connection refused",
+		"Connection refused",
+		"no route to host",
+		"No route to host",
+		"network is unreachable",
+		"Network is unreachable",
+		"connection timed out",
+		"Connection timed out",
+		"failed to connect",
+		"EOF",
+		"timeout",
+		"Timeout",
+	}
+
+	for _, connErr := range connectionErrors {
+		if strings.Contains(errMsg, connErr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// PrepareClipForChatApp prepares a clip for a specific chat app by compressing it if necessary
+func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (string, error) {
+	fileSizeLimits := map[string]float64{
+		"discord":    10.0,
+		"telegram":   50.0,
+		"mattermost": 100.0,
+	}
+
+	const maxCRF = 40
+	const initialCRF = 23
+	const crfStep = 5
+
+	targetSizeMB, exists := fileSizeLimits[chatApp]
+	if !exists {
+		return "", fmt.Errorf("unknown chat app: %s", chatApp)
+	}
+
+	fileInfo, err := os.Stat(originalFilePath)
+	if err != nil {
+		return "", fmt.Errorf("could not access the clip file: %v", err)
+	}
+
+	fileSizeMB := float64(fileInfo.Size()) / 1024 / 1024
+	cm.log.Info("📏 Original file size for %s: %.2f MB (limit: %.2f MB)", chatApp, fileSizeMB, targetSizeMB)
+
+	if fileSizeMB <= targetSizeMB {
+		cm.log.Success("✅ File size is under the limit for %s, using original file", chatApp)
+		return originalFilePath, nil
+	}
+
+	duration, err := cm.verifyClipDuration(originalFilePath)
+	if err != nil {
+		return "", fmt.Errorf("could not verify clip duration: %v", err)
+	}
+	cm.log.Info("⏱️ Clip duration for %s: %.2f seconds", chatApp, duration)
+
+	aspectRatio, err := cm.getVideoAspectRatio(originalFilePath)
+	if err != nil {
+		cm.log.Warning("⚠️ Warning: Could not determine aspect ratio for compression: %v", err)
+		aspectRatio = "16:9"
+	}
+	cm.log.Info("📏 Using aspect ratio for compression: %s", aspectRatio)
+
+	crf := initialCRF
+	compressedFilePath := filepath.Join(filepath.Dir(originalFilePath), fmt.Sprintf("compressed_%s_%s", chatApp, filepath.Base(originalFilePath)))
+
+	for crf <= maxCRF {
+		cm.log.Info("🔧 Compressing for %s with CRF %d", chatApp, crf)
+
+		args := []string{
+			"-i", originalFilePath,
+			"-vf", "scale='min(1280,iw)':-2",
+			"-c:v", "libx264",
+			"-crf", strconv.Itoa(crf),
+			"-preset", "medium",
+			"-c:a", "aac",
+			"-b:a", "96k",
+			"-movflags", "+faststart",
+			"-aspect", aspectRatio,
+			"-y",
+			compressedFilePath,
+		}
+
+		cm.log.Debug("🔧 Compression command for %s: ffmpeg %s", chatApp, strings.Join(args, " "))
+		cmd := exec.Command("ffmpeg", args...)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		if err != nil {
+			cm.log.Error("❌ Compression failed for %s: %v\nFFmpeg output: %s", chatApp, err, stderr.String())
+			return originalFilePath, fmt.Errorf("compression failed: %v", err)
+		}
+
+		compressedInfo, err := os.Stat(compressedFilePath)
+		if err != nil {
+			cm.log.Error("❌ Error checking compressed file for %s: %v, falling back to original", chatApp, err)
+			return originalFilePath, fmt.Errorf("could not access compressed file: %v", err)
+		}
+
+		compressedSizeMB := float64(compressedInfo.Size()) / 1024 / 1024
+		cm.log.Info("📏 Compressed file size for %s: %.2f MB", chatApp, compressedSizeMB)
+
+		if compressedSizeMB <= targetSizeMB {
+			cm.log.Success("✅ Compression succeeded for %s with CRF %d", chatApp, crf)
+			return compressedFilePath, nil
+		}
+
+		crf += crfStep
+	}
+
+	cm.log.Error("❌ Could not compress file under %.2f MB for %s, even with CRF %d", targetSizeMB, chatApp, maxCRF)
+	return compressedFilePath, fmt.Errorf("file size still exceeds %.2f MB for %s after maximum compression", targetSizeMB, chatApp)
+}
+
+// RetryOperation executes the given function and retries up to maxRetries times if it fails
+func (cm *ClipManager) RetryOperation(operation func() error, serviceName string) error {
+	var err error
+
+	err = operation()
+	if err == nil {
+		return nil
+	}
+
+	cm.log.Error("Error sending clip to %s: %v", serviceName, err)
+
+	for attempt := 1; attempt <= cm.maxRetries; attempt++ {
+		cm.log.Warning("Retry %d/%d for %s...", attempt, cm.maxRetries, serviceName)
+		time.Sleep(cm.retryDelay)
+
+		err = operation()
+		if err == nil {
+			cm.log.Success("Retry %d/%d for %s succeeded", attempt, cm.maxRetries, serviceName)
+			return nil
+		}
+
+		cm.log.Error("Retry %d/%d for %s failed: %v", attempt, cm.maxRetries, serviceName, err)
+	}
+
+	cm.log.Error("All %d retries failed for %s", cm.maxRetries, serviceName)
+	return fmt.Errorf("failed to send clip to %s after %d attempts: %v", serviceName, cm.maxRetries+1, err)
+}
+
+// sendToTelegram sends a clip to Telegram
 func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, req ClipRequest) error {
 	operation := func() error {
 		file, err := os.Open(filePath)
 		if err != nil {
-			return fmt.Errorf("could not open file for Telegram: %v", err)
+			return fmt.Errorf("could not open file for sending to Telegram: %v", err)
 		}
 		defer file.Close()
 
-		var b bytes.Buffer
-		writer := multipart.NewWriter(&b)
-		if err := writer.WriteField("chat_id", chatID); err != nil {
-			return fmt.Errorf("error adding chat_id to Telegram request: %v", err)
-		}
 		captionText := cm.buildClipMessage(req)
+		captionText += "\n(if distorted, download and view elsewhere)"
+
+		chatID = strings.Trim(chatID, `"'`)
+		if chatID == "" {
+			return fmt.Errorf("error: telegram_chat_id is empty, cannot send to Telegram")
+		}
+
+		reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
+
+		cm.log.Info("Sending clip to Telegram. File: %s", filepath.Base(filePath))
+
+		var requestBody bytes.Buffer
+		writer := multipart.NewWriter(&requestBody)
+
+		if err := writer.WriteField("chat_id", chatID); err != nil {
+			return fmt.Errorf("error preparing Telegram request: %v", err)
+		}
+
 		if err := writer.WriteField("caption", captionText); err != nil {
 			return fmt.Errorf("error adding caption to Telegram request: %v", err)
 		}
+
 		part, err := writer.CreateFormFile("video", filepath.Base(filePath))
 		if err != nil {
-			return fmt.Errorf("error creating form file for Telegram: %v", err)
+			return fmt.Errorf("error creating file field for Telegram: %v", err)
 		}
-		if _, err := io.Copy(part, file); err != nil {
-			return fmt.Errorf("error copying file to Telegram form: %v", err)
-		}
-		writer.Close()
 
-		url := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
-		resp, err := cm.httpClient.Post(url, writer.FormDataContentType(), &b)
+		if _, err := io.Copy(part, file); err != nil {
+			return fmt.Errorf("error copying file to Telegram request: %v", err)
+		}
+
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("error finalizing Telegram request: %v", err)
+		}
+
+		req, err := http.NewRequest("POST", reqURL, &requestBody)
 		if err != nil {
-			return fmt.Errorf("Telegram API request failed: %v", err)
+			return fmt.Errorf("error creating Telegram request: %v", err)
+		}
+
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+
+		resp, err := cm.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("error sending clip to Telegram: %v", err)
 		}
 		defer resp.Body.Close()
 
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		responseBody := string(bodyBytes)
+
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("Telegram API returned non-200 status: %d, body: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("telegram API error: %s - %s", resp.Status, responseBody)
 		}
-		cm.log.Info("Successfully sent clip to Telegram")
+
+		cm.log.Success("Clip successfully sent to Telegram")
 		return nil
 	}
+
 	return cm.RetryOperation(operation, "Telegram")
 }
 
-func (cm *ClipManager) sendToMattermost(filePath, serverURL, token, channel string, req ClipRequest) error {
+// sendToMattermost sends a clip to Mattermost
+func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelID string, req ClipRequest) error {
 	operation := func() error {
 		file, err := os.Open(filePath)
 		if err != nil {
-			return fmt.Errorf("could not open file for Mattermost: %v", err)
+			return fmt.Errorf("could not open file for sending to Mattermost: %v", err)
 		}
 		defer file.Close()
 
-		var b bytes.Buffer
-		writer := multipart.NewWriter(&b)
+		var requestBody bytes.Buffer
+		writer := multipart.NewWriter(&requestBody)
+
+		if err := writer.WriteField("channel_id", channelID); err != nil {
+			return fmt.Errorf("error preparing Mattermost request: %v", err)
+		}
+
 		part, err := writer.CreateFormFile("files", filepath.Base(filePath))
 		if err != nil {
-			return fmt.Errorf("error creating form file for Mattermost: %v", err)
+			return fmt.Errorf("error creating file field for Mattermost: %v", err)
 		}
-		if _, err := io.Copy(part, file); err != nil {
-			return fmt.Errorf("error copying file to Mattermost form: %v", err)
-		}
-		if err := writer.WriteField("channel_id", channel); err != nil {
-			return fmt.Errorf("error adding channel_id to Mattermost request: %v", err)
-		}
-		writer.Close()
 
-		url := fmt.Sprintf("%s/api/v4/files", serverURL)
-		req, err := http.NewRequest("POST", url, &b)
-		if err != nil {
-			return fmt.Errorf("error creating Mattermost file request: %v", err)
+		if _, err := io.Copy(part, file); err != nil {
+			return fmt.Errorf("error copying file to Mattermost request: %v", err)
 		}
+
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("error finalizing Mattermost request: %v", err)
+		}
+
+		fileUploadURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
+		cm.log.Info("Uploading file to Mattermost")
+
+		req, err := http.NewRequest("POST", fileUploadURL, &requestBody)
+		if err != nil {
+			return fmt.Errorf("error creating Mattermost upload request: %v", err)
+		}
+
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 		req.Header.Set("Authorization", "Bearer "+token)
 
 		resp, err := cm.httpClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("Mattermost file upload failed: %v", err)
+			return fmt.Errorf("error uploading to Mattermost: %v", err)
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("Mattermost file upload returned non-201 status: %d, body: %s", resp.StatusCode, string(body))
+		if resp.StatusCode >= 300 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("mattermost file upload error: %s - %s", resp.Status, string(bodyBytes))
 		}
 
-		var fileResp struct {
+		var fileResponse struct {
 			FileInfos []struct {
 				ID string `json:"id"`
 			} `json:"file_infos"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&fileResp); err != nil {
-			return fmt.Errorf("error decoding Mattermost file response: %v", err)
-		}
-		if len(fileResp.FileInfos) == 0 {
-			return fmt.Errorf("no file ID returned from Mattermost")
-		}
-		fileID := fileResp.FileInfos[0].ID
 
-		post := struct {
-			ChannelID string   `json:"channel_id"`
-			Message   string   `json:"message"`
-			FileIDs   []string `json:"file_ids"`
-		}{
-			ChannelID: channel,
-			Message:   cm.buildClipMessage(req),
-			FileIDs:   []string{fileID},
+		if err := json.NewDecoder(resp.Body).Decode(&fileResponse); err != nil {
+			return fmt.Errorf("error parsing Mattermost response: %v", err)
 		}
-		postData, _ := json.Marshal(post)
-		postReq, err := http.NewRequest("POST", serverURL+"/api/v4/posts", bytes.NewBuffer(postData))
+
+		if len(fileResponse.FileInfos) == 0 {
+			return fmt.Errorf("no file IDs returned from Mattermost")
+		}
+
+		messageText := cm.buildClipMessage(req)
+
+		fileIDs := make([]string, len(fileResponse.FileInfos))
+		for i, fileInfo := range fileResponse.FileInfos {
+			fileIDs[i] = fileInfo.ID
+		}
+
+		postData := map[string]interface{}{
+			"channel_id": channelID,
+			"message":    messageText,
+			"file_ids":   fileIDs,
+		}
+
+		postJSON, err := json.Marshal(postData)
 		if err != nil {
-			return fmt.Errorf("error creating Mattermost post request: %v", err)
+			return fmt.Errorf("error creating post JSON: %v", err)
 		}
+
+		postURL := fmt.Sprintf("%s/api/v4/posts", mattermostURL)
+		postReq, err := http.NewRequest("POST", postURL, bytes.NewBuffer(postJSON))
+		if err != nil {
+			return fmt.Errorf("error creating post request: %v", err)
+		}
+
 		postReq.Header.Set("Content-Type", "application/json")
 		postReq.Header.Set("Authorization", "Bearer "+token)
 
 		postResp, err := cm.httpClient.Do(postReq)
 		if err != nil {
-			return fmt.Errorf("Mattermost post request failed: %v", err)
+			return fmt.Errorf("error creating Mattermost post: %v", err)
 		}
 		defer postResp.Body.Close()
 
-		if postResp.StatusCode != http.StatusCreated {
-			body, _ := io.ReadAll(postResp.Body)
-			return fmt.Errorf("Mattermost post returned non-201 status: %d, body: %s", postResp.StatusCode, string(body))
+		if postResp.StatusCode >= 300 {
+			bodyBytes, _ := io.ReadAll(postResp.Body)
+			return fmt.Errorf("mattermost post creation error: %s - %s", postResp.Status, string(bodyBytes))
 		}
-		cm.log.Info("Successfully sent clip to Mattermost")
+
+		cm.log.Success("Clip successfully sent to Mattermost")
 		return nil
 	}
+
 	return cm.RetryOperation(operation, "Mattermost")
 }
 
+// sendToDiscord sends a clip to Discord
 func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, req ClipRequest) error {
 	operation := func() error {
 		file, err := os.Open(filePath)
 		if err != nil {
-			return fmt.Errorf("could not open file for Discord: %v", err)
+			return fmt.Errorf("could not open file for sending to Discord: %v", err)
 		}
 		defer file.Close()
 
-		var b bytes.Buffer
-		writer := multipart.NewWriter(&b)
-		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
-		if err != nil {
-			return fmt.Errorf("error creating form file for Discord: %v", err)
-		}
-		if _, err := io.Copy(part, file); err != nil {
-			return fmt.Errorf("error copying file to Discord form: %v", err)
-		}
-		if err := writer.WriteField("content", cm.buildClipMessage(req)); err != nil {
+		messageText := cm.buildClipMessage(req)
+
+		var requestBody bytes.Buffer
+		writer := multipart.NewWriter(&requestBody)
+
+		if err := writer.WriteField("content", messageText); err != nil {
 			return fmt.Errorf("error adding content to Discord request: %v", err)
 		}
-		writer.Close()
 
-		resp, err := cm.httpClient.Post(webhookURL, writer.FormDataContentType(), &b)
+		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
 		if err != nil {
-			return fmt.Errorf("Discord webhook request failed: %v", err)
+			return fmt.Errorf("error creating file field for Discord: %v", err)
+		}
+
+		if _, err := io.Copy(part, file); err != nil {
+			return fmt.Errorf("error copying file to Discord request: %v", err)
+		}
+
+		if err := writer.Close(); err != nil {
+			return fmt.Errorf("error finalizing Discord request: %v", err)
+		}
+
+		cm.log.Info("Sending clip to Discord. File: %s", filepath.Base(filePath))
+
+		req, err := http.NewRequest("POST", webhookURL, &requestBody)
+		if err != nil {
+			return fmt.Errorf("error creating Discord request: %v", err)
+		}
+
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+
+		resp, err := cm.httpClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("error sending to Discord: %v", err)
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("Discord webhook returned non-200/204 status: %d, body: %s", resp.StatusCode, string(body))
+		if resp.StatusCode >= 300 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("discord API error: %s - %s", resp.Status, string(bodyBytes))
 		}
-		cm.log.Info("Successfully sent clip to Discord")
+
+		cm.log.Success("Clip successfully sent to Discord")
 		return nil
 	}
+
 	return cm.RetryOperation(operation, "Discord")
 }
 
-func (cm *ClipManager) RetryOperation(operation func() error, appName string) error {
-	for i := 0; i < cm.maxRetries; i++ {
-		if err := operation(); err != nil {
-			cm.log.Warn("Attempt %d failed for %s: %v", i+1, appName, err)
-			if i == cm.maxRetries-1 {
-				return err
-			}
-			time.Sleep(cm.retryDelay)
+// SendToChatApp sends the clip to the appropriate chat apps
+func (cm *ClipManager) SendToChatApp(originalFilePath string, req ClipRequest) error {
+	chatApps := strings.Split(strings.ToLower(req.ChatApps), ",")
+
+	var wg sync.WaitGroup
+	errors := make(chan error, len(chatApps))
+	compressedFiles := make(map[string]string)
+
+	for _, app := range chatApps {
+		app = strings.TrimSpace(app)
+
+		filePath, err := cm.PrepareClipForChatApp(originalFilePath, app)
+		if err != nil {
+			cm.log.Error("Error preparing clip for %s: %v", app, err)
+			errors <- fmt.Errorf("error preparing clip for %s: %v", app, err)
 			continue
 		}
-		return nil
+
+		if filePath != originalFilePath {
+			compressedFiles[app] = filePath
+		}
+
+		wg.Add(1)
+		go func(app, filePath string) {
+			defer wg.Done()
+
+			var err error
+			switch app {
+			case "telegram":
+				err = cm.sendToTelegram(filePath, req.TelegramBotToken, req.TelegramChatID, req)
+			case "mattermost":
+				err = cm.sendToMattermost(filePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req)
+			case "discord":
+				err = cm.sendToDiscord(filePath, req.DiscordWebhookURL, req)
+			default:
+				err = fmt.Errorf("unsupported chat app: %s", app)
+			}
+
+			if err != nil {
+				cm.log.Error("Error sending clip to %s: %v", app, err)
+				errors <- fmt.Errorf("error sending to %s: %v", app, err)
+			} else {
+				cm.log.Success("Successfully sent clip to %s", app)
+			}
+		}(app, filePath)
 	}
+
+	wg.Wait()
+	close(errors)
+
+	for app, filePath := range compressedFiles {
+		cm.log.Info("Cleaning up compressed file for %s: %s", app, filePath)
+		os.Remove(filePath)
+	}
+
+	var errList []string
+	for err := range errors {
+		errList = append(errList, err.Error())
+	}
+
+	if len(errList) > 0 {
+		return fmt.Errorf("errors sending clip: %s", strings.Join(errList, "; "))
+	}
+
 	return nil
 }
 
+// buildClipMessage constructs the message for chat apps with new fields
 func (cm *ClipManager) buildClipMessage(req ClipRequest) string {
-	base := fmt.Sprintf("New %sClip: %s", optionalCategory(req.Category), cm.formatDate())
+	base := fmt.Sprintf("New %sClip: %s", optionalCategory(req.Category), cm.formatCurrentTime())
 
 	var teams string
 	if req.Team1 != "" && req.Team2 != "" {
@@ -744,6 +1184,7 @@ func (cm *ClipManager) buildClipMessage(req ClipRequest) string {
 	return base + teams + extra
 }
 
+// optionalCategory adds a space if category is present
 func optionalCategory(category string) string {
 	if category != "" {
 		return category + " "
@@ -751,56 +1192,112 @@ func optionalCategory(category string) string {
 	return ""
 }
 
-func (cm *ClipManager) formatDate() string {
+// formatCurrentTime returns a formatted current time string
+func (cm *ClipManager) formatCurrentTime() string {
 	return time.Now().Format("2006-01-02")
 }
 
-type Logger struct {
+// serveWebInterface serves the HTML form interface at the root endpoint
+func (cm *ClipManager) serveWebInterface(w http.ResponseWriter, r *http.Request) {
+	templatePath := "templates/index.html"
+
+	_, err := os.Stat(templatePath)
+	if err != nil {
+		execPath, err := os.Executable()
+		if err == nil {
+			execDir := filepath.Dir(execPath)
+			templatePath = filepath.Join(execDir, "templates/index.html")
+		}
+	}
+
+	htmlContent, err := os.ReadFile(templatePath)
+	if err != nil {
+		cm.log.Warning("Error reading template file: %v, using embedded HTML", err)
+		htmlContent = []byte(getEmbeddedHTML())
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	w.Write(htmlContent)
 }
 
-func NewLogger() *Logger {
-	return &Logger{}
-}
-
-func (l *Logger) Info(format string, v ...interface{}) {
-	log.Printf("\033[34mℹ️ %s\033[0m", fmt.Sprintf(format, v...))
-}
-
-func (l *Logger) Error(format string, v ...interface{}) {
-	log.Printf("\033[31m❌ %s\033[0m", fmt.Sprintf(format, v...))
-}
-
-func (l *Logger) Warn(format string, v ...interface{}) {
-	log.Printf("\033[33m⚠️ %s\033[0m", fmt.Sprintf(format, v...))
+// getEmbeddedHTML returns the HTML content as a fallback if the file can't be loaded
+func getEmbeddedHTML() string {
+	return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ClipManager</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>ClipManager</h1>
+    <p>The template file could not be loaded. Please make sure the templates directory exists.</p>
+    <p>API endpoint is still available at: /api/clip</p>
+</body>
+</html>
+`
 }
 
 func main() {
+	log.Println("Starting ClipManager...")
+
 	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, relying on environment variables")
+		log.Printf("Warning: Error loading .env file: %v", err)
 	}
 
-	tempDir := os.Getenv("TEMP_DIR")
-	if tempDir == "" {
-		tempDir = "./clips"
-	}
-	hostPort := os.Getenv("HOST_PORT")
-	if hostPort == "" {
-		hostPort = "5001"
-	}
 	cameraIP := os.Getenv("CAMERA_IP")
+	if cameraIP == "" {
+		log.Fatal("CAMERA_IP environment variable must be set")
+	}
 
-	cm, err := NewClipManager(tempDir, hostPort, cameraIP)
+	containerPort := "5000"
+	hostPort := getHostPort()
+	if hostPort == "" {
+		log.Fatal("HOST_PORT environment variable must be set")
+	}
+
+	clipManager, err := NewClipManager("clips", hostPort, cameraIP)
 	if err != nil {
 		log.Fatalf("Failed to initialize ClipManager: %v", err)
 	}
 
-	go cm.StartBackgroundRecording()
+	go clipManager.StartBackgroundRecording()
 
-	http.HandleFunc("/api/clip", cm.HandleClipRequest)
-	http.Handle("/", http.FileServer(http.Dir("./static")))
+	os.MkdirAll("templates", 0755)
+	os.MkdirAll("static/css", 0755)
+	os.MkdirAll("static/img", 0755)
 
-	cm.log.Info("Starting server on port %s", hostPort)
-	if err := http.ListenAndServe(":"+hostPort, nil); err != nil {
-		cm.log.Error("Server failed: %v", err)
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	http.HandleFunc("/api/clip", clipManager.RateLimit(clipManager.HandleClipRequest))
+	http.HandleFunc("/", clipManager.serveWebInterface)
+
+	clipManager.log.Info("ClipManager is running!")
+	clipManager.log.Info("Access the web interface at: http://localhost:%s/", hostPort)
+	clipManager.log.Info("API endpoint available at: http://localhost:%s/api/clip", hostPort)
+
+	log.Fatal(http.ListenAndServe(":"+containerPort, nil))
+}
+
+// getHostPort determines the external port that users should connect to
+func getHostPort() string {
+	hostPort := os.Getenv("HOST_PORT")
+	if hostPort == "" {
+		return "5001"
 	}
+	return hostPort
 }
