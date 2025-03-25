@@ -1,7 +1,7 @@
 # ClipManager
 
-<p align="center">
-  <img src="static/img/ClipManager.png" alt="ClipManager Logo" width="400">
+<p align="left">
+  <img src="../static/img/ClipManager.png" alt="ClipManager Logo" width="400">
 </p>
 
 ClipManager is a simple, fast, and lightweight tool to record clips from an RTSP camera and send them to Telegram, Mattermost, or Discord.
@@ -58,7 +58,7 @@ ClipManager is a simple, fast, and lightweight tool to record clips from an RTSP
 
 ## API Documentation
 
-## Endpoint: `/api/clip`
+### Endpoint: `/api/clip`
 
 An endpoint for recording and sending video clips from an RTSP camera stream.
 
@@ -71,10 +71,16 @@ An endpoint for recording and sending video clips from an RTSP camera stream.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
+| `camera_ip` | string | Yes* | From `.env` | RTSP URL for the camera |
 | `backtrack_seconds` | int | No | 0 | Seconds to rewind before recording (0-300) |
 | `duration_seconds` | int | Yes | - | Length of clip to record in seconds (1-300) |
 | `chat_app` | string | Yes | - | Comma-separated list of platforms to send clip to (`telegram`, `mattermost`, `discord`) |
 | `category` | string | No | - | Optional label to categorize clips |
+| `team1` | string | No | - | Name of first team (for sports clips) |
+| `team2` | string | No | - | Name of second team (for sports clips) |
+| `additional_text` | string | No | - | Additional description text to append to clip message |
+
+*Required if not specified in `.env` file
 
 ### Platform-Specific Parameters
 
@@ -99,7 +105,5 @@ An endpoint for recording and sending video clips from an RTSP camera stream.
 ### Response
 
 Returns a JSON object with a `message` field indicating the request was received and processing has started.
-
-## Need More Details?
 
 For advanced usage, troubleshooting, and technical specifics, see [DEVELOPER.md](DEVELOPER.md).

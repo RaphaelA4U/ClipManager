@@ -4,7 +4,7 @@ This document provides technical details for developers working on or integratin
 
 ## Overview
 
-ClipManager is a Go application that records RTSP streams in 5-second segments, enabling backtracking up to 310 seconds (62 segments). It processes requests asynchronously and sends clips to Telegram, Mattermost, or Discord.
+ClipManager is a Go application that records RTSP streams in 5-second segments, enabling backtracking up to 300 seconds. It processes requests asynchronously and sends clips to Telegram, Mattermost, or Discord.
 
 ## Architecture
 
@@ -46,7 +46,7 @@ Environment variables in `.env`:
 ## Segment Management
 
 - Segments are stored in `clips/` as `segment_cycleN_NNN.ts`.
-- Maximum 62 segments (310 seconds) are kept, older ones are deleted.
+- Maximum 300 seconds are kept, older ones are deleted.
 - Timestamps are used to align segments with requested times.
 
 ## Logging
