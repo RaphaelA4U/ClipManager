@@ -56,12 +56,49 @@ ClipManager is a simple, fast, and lightweight tool to record clips from an RTSP
 2. Configure your clip settings (backtrack, duration, chat apps, etc.).
 3. Save your settings and click "Record Clip" to capture and send.
 
-## Example API Request
+## API Documentation
 
-Record a 10-second clip from 10 seconds ago and send it to Telegram:
-```bash
-curl "http://localhost:5001/api/clip?backtrack_seconds=10&duration_seconds=10&chat_app=telegram&telegram_bot_token=YOUR_TOKEN&telegram_chat_id=YOUR_CHAT_ID"
-```
+## Endpoint: `/api/clip`
+
+An endpoint for recording and sending video clips from an RTSP camera stream.
+
+### Methods Supported
+
+- `GET` - Request a clip via URL parameters
+- `POST` - Request a clip via JSON body
+
+### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `backtrack_seconds` | int | No | 0 | Seconds to rewind before recording (0-300) |
+| `duration_seconds` | int | Yes | - | Length of clip to record in seconds (1-300) |
+| `chat_app` | string | Yes | - | Comma-separated list of platforms to send clip to (`telegram`, `mattermost`, `discord`) |
+| `category` | string | No | - | Optional label to categorize clips |
+
+### Platform-Specific Parameters
+
+#### Telegram
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `telegram_bot_token` | string | Yes | Telegram Bot API token |
+| `telegram_chat_id` | string | Yes | Target chat/channel ID |
+
+#### Mattermost
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `mattermost_url` | string | Yes | Mattermost server URL (no trailing slash) |
+| `mattermost_token` | string | Yes | User or bot access token |
+| `mattermost_channel` | string | Yes | Target channel ID |
+
+#### Discord
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `discord_webhook_url` | string | Yes | Discord webhook URL |
+
+### Response
+
+Returns a JSON object with a `message` field indicating the request was received and processing has started.
 
 ## Need More Details?
 

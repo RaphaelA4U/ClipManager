@@ -30,7 +30,7 @@ Environment variables in `.env`:
   - `backtrack_seconds` (0-300): Seconds to go back.
   - `duration_seconds` (1-300): Clip length.
   - `chat_app`: Comma-separated list (e.g., `telegram,discord`).
-  - Platform-specific: See [README](#example-requests) for examples.
+  - Platform-specific: See the main README file for platform-specific parameters.
 
 ### Example POST Request
 ```json
