@@ -77,28 +77,18 @@ func (l *Logger) Debug(format string, v ...interface{}) {
 }
 
 type ClipRequest struct {
-	// Common parameters (ordered logically)
-	CameraIP         string `json:"camera_ip"`
-	BacktrackSeconds int    `json:"backtrack_seconds"`
-	DurationSeconds  int    `json:"duration_seconds"`
-	ChatApp          string `json:"chat_app"`
-	Category         string `json:"category"`
-
-	// Chat app specific parameters
-	// Telegram parameters
-	TelegramBotToken string `json:"telegram_bot_token"`
-	TelegramChatID   string `json:"telegram_chat_id"`
-
-	// Mattermost parameters
-	MattermostURL     string `json:"mattermost_url"`
-	MattermostToken   string `json:"mattermost_token"`
-	MattermostChannel string `json:"mattermost_channel"`
-
-	// Discord parameters
-	DiscordWebhookURL string `json:"discord_webhook_url"`
-
-	// PoolManager integration - commented out but preserved for future use
-	PoolManagerConnection bool `json:"poolmanager_connection"`
+    CameraIP          string `json:"camera_ip"`
+    BacktrackSeconds  int    `json:"backtrack_seconds"`
+    DurationSeconds   int    `json:"duration_seconds"`
+    ChatApps          string `json:"chat_app"`
+    Category          string `json:"category"`
+    TelegramBotToken  string `json:"telegram_bot_token"`
+    TelegramChatID    string `json:"telegram_chat_id"`
+    MattermostURL     string `json:"mattermost_url"`
+    MattermostToken   string `json:"mattermost_token"`
+    MattermostChannel string `json:"mattermost_channel"`
+    DiscordWebhookURL string `json:"discord_webhook_url"`
+    // PoolManagerConnection bool `json:"poolmanager_connection"` (uitgecommentarieerd)
 }
 
 type ClipResponse struct {
@@ -119,37 +109,32 @@ type SegmentInfo struct {
 }
 
 type ClipManager struct {
-	tempDir         string
-	httpClient      *http.Client
-	limiter         *rate.Limiter
-	hostPort        string
-	maxRetries      int
-	retryDelay      time.Duration
-	cameraIP        string
-	segmentPattern  string // Pattern for segment files
-	recording       bool   // Flag to indicate if background recording is active
-	segments        []SegmentInfo // List of available segments with timestamps
-	segmentsMutex   sync.RWMutex  // Mutex for thread-safe segments list access
-	segmentChan     chan SegmentInfo // Channel to receive new segments
-	segmentDuration int // Duration of each segment in seconds
-	logger          *Logger // Custom logger for colored and emoji logs
+    tempDir         string
+    httpClient      *http.Client
+    limiter         *rate.Limiter
+    hostPort        string
+    maxRetries      int
+    retryDelay      time.Duration
+    cameraIP        string
+    segmentPattern  string
+    recording       bool
+    segments        []SegmentInfo
+    segmentsMutex   sync.RWMutex
+    segmentChan     chan SegmentInfo
+    segmentDuration int
+    log             *Logger
 }
 
-// NewClipManager creates a new ClipManager instance
+// NewClipManager initializes a ClipManager with the given temp directory, host port, and camera IP.
 func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipManager, error) {
-	// Ensure the temp directory exists
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create directory %s: %v", tempDir, err)
+		return nil, fmt.Errorf("failed to create temp directory %s: %v", tempDir, err)
 	}
-
-	// Convert tempDir to absolute path to avoid path issues
 	absTemp, err := filepath.Abs(tempDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path for tempDir: %v", err)
+		return nil, fmt.Errorf("failed to resolve absolute path for %s: %v", tempDir, err)
 	}
-
-	// Base segment pattern without the cycle suffix (will be added dynamically)
-	segmentPattern := filepath.Join(absTemp, "segment_%03d.ts")
+	segmentPattern := filepath.Join(absTemp, "segment_%03d.ts") // Base pattern for segment files
 
 	return &ClipManager{
 		tempDir:         absTemp,
@@ -160,12 +145,9 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
 		retryDelay:      5 * time.Second,
 		cameraIP:        cameraIP,
 		segmentPattern:  segmentPattern,
-		recording:       false,
-		segments:        []SegmentInfo{},
-		segmentsMutex:   sync.RWMutex{},
-		segmentChan:     make(chan SegmentInfo, 100), // Buffered channel for new segments
-		segmentDuration: 5, // Segment duration in seconds
-		logger:          NewLogger(), // Initialize the custom logger
+		segmentChan:     make(chan SegmentInfo, 100),
+		segmentDuration: 5,
+		log:             NewLogger(),
 	}, nil
 }
 
@@ -481,54 +463,36 @@ func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
 	return availableSpace, nil
 }
 
-// addSegment adds a segment to the list of available segments
+// addSegment appends a new segment to the segment list and maintains a maximum of 62 segments (310 seconds).
 func (cm *ClipManager) addSegment(segmentPath string) {
 	cm.segmentsMutex.Lock()
 	defer cm.segmentsMutex.Unlock()
 
-	// Construct the absolute path properly by joining tempDir and segment filename
 	absolutePath := filepath.Join(cm.tempDir, segmentPath)
-
-	// Create SegmentInfo with the current timestamp
 	segmentInfo := SegmentInfo{
 		Path:      absolutePath,
 		Timestamp: time.Now(),
 	}
-
-	// Add the segment to the list
 	cm.segments = append(cm.segments, segmentInfo)
 
-	// Sort segments by timestamp to ensure chronological order
 	sort.Slice(cm.segments, func(i, j int) bool {
 		return cm.segments[i].Timestamp.Before(cm.segments[j].Timestamp)
 	})
 
-	// Keep only the last 62 segments (62 * 5 seconds = 310 seconds maximum backtrack)
-	maxSegments := 62
+	const maxSegments = 62
 	if len(cm.segments) > maxSegments {
-		// Get the oldest segments to remove
-		segmentsToRemove := cm.segments[:len(cm.segments)-maxSegments]
-
-		// Update the segments list
-		cm.segments = cm.segments[len(cm.segments)-maxSegments:]
-
-		// Delete the old segment files
-		for _, oldSegment := range segmentsToRemove {
-			if _, err := os.Stat(oldSegment.Path); err == nil {
-				if err := os.Remove(oldSegment.Path); err != nil {
-					log.Printf("❌ Error removing old segment %s: %v", oldSegment.Path, err)
-				} else {
-					log.Printf("🗑️ Removed old segment: %s", oldSegment.Path)
-				}
+		for _, old := range cm.segments[:len(cm.segments)-maxSegments] {
+			if err := os.Remove(old.Path); err != nil {
+				cm.log.Error("Failed to remove old segment %s: %v", old.Path, err)
+			} else {
+				cm.log.Info("Removed old segment: %s", old.Path)
 			}
 		}
+		cm.segments = cm.segments[len(cm.segments)-maxSegments:]
 	}
 
-	// Send the new segment to the channel for waiting routines
 	cm.segmentChan <- segmentInfo
-
-	log.Printf("📼 Current segments: %d (up to %d seconds of backtracking available)",
-		len(cm.segments), len(cm.segments)*cm.segmentDuration)
+	cm.log.Info("Added segment: %s, total: %d (up to %d seconds)", segmentPath, len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
 // getVideoAspectRatio retrieves the aspect ratio of a video file using ffprobe
