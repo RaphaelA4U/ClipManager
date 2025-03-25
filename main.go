@@ -80,11 +80,11 @@ type ClipRequest struct {
 	CameraIP          string `json:"camera_ip"`
 	BacktrackSeconds  int    `json:"backtrack_seconds"`
 	DurationSeconds   int    `json:"duration_seconds"`
-	ChatApps          string `json:"chat_app"` // Hernoemd naar ChatApps voor consistentie
+	ChatApps          string `json:"chat_app"` 
 	Category          string `json:"category"`
-	Team1             string `json:"team1"`          // Nieuw
-	Team2             string `json:"team2"`          // Nieuw
-	AdditionalText    string `json:"additional_text"` // Nieuw
+	Team1             string `json:"team1"`          
+	Team2             string `json:"team2"`          
+	AdditionalText    string `json:"additional_text"`
 	TelegramBotToken  string `json:"telegram_bot_token"`
 	TelegramChatID    string `json:"telegram_chat_id"`
 	MattermostURL     string `json:"mattermost_url"`
@@ -116,10 +116,9 @@ type ClipManager struct {
 	segmentsMutex   sync.RWMutex
 	segmentChan     chan SegmentInfo
 	segmentDuration int
-	log             *Logger // Gebruik 'log' consistent met nieuwe versie
+	log             *Logger 
 }
 
-// NewClipManager initializes a ClipManager with the given temp directory, host port, and camera IP.
 func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipManager, error) {
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp directory %s: %v", tempDir, err)
@@ -145,7 +144,6 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
 	}, nil
 }
 
-// RateLimit is a middleware that limits requests based on the ClipManager's rate limiter
 func (cm *ClipManager) RateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !cm.limiter.Allow() {
@@ -157,82 +155,48 @@ func (cm *ClipManager) RateLimit(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// HandleClipRequest handles HTTP requests to create and send clips
 func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-	requestID := fmt.Sprintf("req_%d", time.Now().UnixNano())
+    startTime := time.Now()
+    requestID := fmt.Sprintf("req_%d", time.Now().UnixNano())
 
-	var req ClipRequest
+    if r.Method != http.MethodGet && r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed, use GET or POST", http.StatusMethodNotAllowed)
+        return
+    }
 
-	if r.Method == http.MethodGet {
-		req.CameraIP = r.URL.Query().Get("camera_ip")
-		backtrackSeconds := r.URL.Query().Get("backtrack_seconds")
-		durationSeconds := r.URL.Query().Get("duration_seconds")
-		req.ChatApps = strings.ToLower(r.URL.Query().Get("chat_app"))
-		req.Category = r.URL.Query().Get("category")
-		req.Team1 = r.URL.Query().Get("team1")           // Nieuw
-		req.Team2 = r.URL.Query().Get("team2")           // Nieuw
-		req.AdditionalText = r.URL.Query().Get("additional_text") // Nieuw
-		req.TelegramBotToken = r.URL.Query().Get("telegram_bot_token")
-		req.TelegramChatID = r.URL.Query().Get("telegram_chat_id")
-		req.MattermostURL = r.URL.Query().Get("mattermost_url")
-		req.MattermostToken = r.URL.Query().Get("mattermost_token")
-		req.MattermostChannel = r.URL.Query().Get("mattermost_channel")
-		req.DiscordWebhookURL = r.URL.Query().Get("discord_webhook_url")
+    fileName := fmt.Sprintf("clip_%d.mp4", time.Now().Unix())
+    filePath := filepath.Join(cm.tempDir, fileName)
 
-		if backtrackSeconds != "" {
-			fmt.Sscanf(backtrackSeconds, "%d", &req.BacktrackSeconds)
-		}
-		if durationSeconds != "" {
-			fmt.Sscanf(durationSeconds, "%d", &req.DurationSeconds)
-		}
-	} else if r.Method == http.MethodPost {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid JSON body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-	} else {
-		http.Error(w, "Method not allowed, use GET or POST", http.StatusMethodNotAllowed)
-		return
-	}
+    response := ClipResponse{Message: "Clip recording and sending started"}
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(response)
 
-	if err := cm.validateRequest(&req); err != nil {
-		cm.log.Error("Validation error: %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+    go func() {
+        defer func() {
+            processingTime := time.Since(startTime)
+            cm.log.Info("[%s] Total processing time: %v", requestID, processingTime)
+        }()
 
-	fileName := fmt.Sprintf("clip_%d.mp4", time.Now().Unix())
-	filePath := filepath.Join(cm.tempDir, fileName)
+        backtrackSeconds, _ := strconv.Atoi(r.URL.Query().Get("backtrack_seconds"))
+        durationSeconds, _ := strconv.Atoi(r.URL.Query().Get("duration_seconds"))
 
-	response := ClipResponse{Message: "Clip recording and sending started"}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+        cm.log.Info("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds",
+            requestID, backtrackSeconds, durationSeconds)
+        err := cm.RecordClip(backtrackSeconds, durationSeconds, filePath, startTime)
+        if err != nil {
+            cm.log.Error("[%s] Recording error: %v", requestID, err)
+            return
+        }
+        cm.log.Success("[%s] Clip recording completed", requestID)
 
-	go func() {
-		defer func() {
-			processingTime := time.Since(startTime)
-			cm.log.Info("[%s] Total processing time: %v", requestID, processingTime)
-		}()
+        if err := cm.SendToChatApp(filePath, r); err != nil {
+            cm.log.Error("[%s] Error sending clip: %v", requestID, err)
+        }
 
-		cm.log.Info("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds",
-			requestID, req.BacktrackSeconds, req.DurationSeconds)
-		err := cm.RecordClip(req.BacktrackSeconds, req.DurationSeconds, filePath, startTime)
-		if err != nil {
-			cm.log.Error("[%s] Recording error: %v", requestID, err)
-			return
-		}
-		cm.log.Success("[%s] Clip recording completed", requestID)
-
-		if err := cm.SendToChatApp(filePath, req); err != nil {
-			cm.log.Error("[%s] Error sending clip: %v", requestID, err)
-		}
-
-		os.Remove(filePath)
-	}()
+        os.Remove(filePath)
+    }()
 }
 
-// validateRequest validates the clip request parameters
 func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 	req.CameraIP = cm.cameraIP
 
@@ -292,7 +256,6 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 	return nil
 }
 
-// StartBackgroundRecording starts a continuous recording of the RTSP stream in segments
 func (cm *ClipManager) StartBackgroundRecording() {
 	if cm.recording {
 		cm.log.Warning("Background recording is already running")
@@ -403,7 +366,6 @@ func (cm *ClipManager) StartBackgroundRecording() {
 	}()
 }
 
-// CheckDiskSpace returns the available disk space in bytes for the clips directory
 func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
 	var stat syscall.Statfs_t
 
@@ -416,7 +378,6 @@ func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
 	return availableSpace, nil
 }
 
-// addSegment appends a new segment to the segment list and maintains a maximum of 62 segments (310 seconds).
 func (cm *ClipManager) addSegment(segmentPath string) {
 	cm.segmentsMutex.Lock()
 	defer cm.segmentsMutex.Unlock()
@@ -448,7 +409,6 @@ func (cm *ClipManager) addSegment(segmentPath string) {
 	cm.log.Info("Added segment: %s, total: %d (up to %d seconds)", segmentPath, len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
-// getVideoAspectRatio retrieves the aspect ratio of a video file using ffprobe
 func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
@@ -497,7 +457,6 @@ func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
 	return aspectRatio, nil
 }
 
-// RecordClip extracts a clip from the segments based on backtrack and duration
 func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputPath string, requestTime time.Time) error {
 	startTime := requestTime.Add(-time.Duration(backtrackSeconds) * time.Second)
 	endTime := startTime.Add(time.Duration(durationSeconds) * time.Second)
@@ -684,7 +643,6 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	return nil
 }
 
-// verifyClipDuration checks if the extracted clip has a valid duration
 func (cm *ClipManager) verifyClipDuration(filePath string) (float64, error) {
 	cmd := exec.Command("ffprobe",
 		"-v", "error",
@@ -712,7 +670,6 @@ func (cm *ClipManager) verifyClipDuration(filePath string) (float64, error) {
 	return duration, nil
 }
 
-// isConnectionError checks if an error message indicates a connection issue
 func isConnectionError(errMsg string) bool {
 	connectionErrors := []string{
 		"connection refused",
@@ -738,7 +695,6 @@ func isConnectionError(errMsg string) bool {
 	return false
 }
 
-// PrepareClipForChatApp prepares a clip for a specific chat app by compressing it if necessary
 func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (string, error) {
 	fileSizeLimits := map[string]float64{
 		"discord":    10.0,
@@ -832,7 +788,6 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 	return compressedFilePath, fmt.Errorf("file size still exceeds %.2f MB for %s after maximum compression", targetSizeMB, chatApp)
 }
 
-// RetryOperation executes the given function and retries up to maxRetries times if it fails
 func (cm *ClipManager) RetryOperation(operation func() error, serviceName string) error {
 	var err error
 
@@ -860,328 +815,358 @@ func (cm *ClipManager) RetryOperation(operation func() error, serviceName string
 	return fmt.Errorf("failed to send clip to %s after %d attempts: %v", serviceName, cm.maxRetries+1, err)
 }
 
-// sendToTelegram sends a clip to Telegram
-func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, req ClipRequest) error {
-	operation := func() error {
-		file, err := os.Open(filePath)
-		if err != nil {
-			return fmt.Errorf("could not open file for sending to Telegram: %v", err)
-		}
-		defer file.Close()
+func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, r *http.Request) error {
+    operation := func() error {
+        file, err := os.Open(filePath)
+        if err != nil {
+            return fmt.Errorf("could not open file for sending to Telegram: %v", err)
+        }
+        defer file.Close()
 
-		captionText := cm.buildClipMessage(req)
-		captionText += "\n(if distorted, download and view elsewhere)"
+        captionText := cm.buildClipMessage(r)
+        captionText += "\n(if distorted, download and view elsewhere)"
 
-		chatID = strings.Trim(chatID, `"'`)
-		if chatID == "" {
-			return fmt.Errorf("error: telegram_chat_id is empty, cannot send to Telegram")
-		}
+        chatID = strings.Trim(chatID, `"'`)
+        if chatID == "" {
+            return fmt.Errorf("error: telegram_chat_id is empty, cannot send to Telegram")
+        }
 
-		reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
+        reqURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendVideo", botToken)
 
-		cm.log.Info("Sending clip to Telegram. File: %s", filepath.Base(filePath))
+        cm.log.Info("Sending clip to Telegram. File: %s", filepath.Base(filePath))
 
-		var requestBody bytes.Buffer
-		writer := multipart.NewWriter(&requestBody)
+        var requestBody bytes.Buffer
+        writer := multipart.NewWriter(&requestBody)
 
-		if err := writer.WriteField("chat_id", chatID); err != nil {
-			return fmt.Errorf("error preparing Telegram request: %v", err)
-		}
+        if err := writer.WriteField("chat_id", chatID); err != nil {
+            return fmt.Errorf("error preparing Telegram request: %v", err)
+        }
 
-		if err := writer.WriteField("caption", captionText); err != nil {
-			return fmt.Errorf("error adding caption to Telegram request: %v", err)
-		}
+        if err := writer.WriteField("caption", captionText); err != nil {
+            return fmt.Errorf("error adding caption to Telegram request: %v", err)
+        }
 
-		part, err := writer.CreateFormFile("video", filepath.Base(filePath))
-		if err != nil {
-			return fmt.Errorf("error creating file field for Telegram: %v", err)
-		}
+        part, err := writer.CreateFormFile("video", filepath.Base(filePath))
+        if err != nil {
+            return fmt.Errorf("error creating file field for Telegram: %v", err)
+        }
 
-		if _, err := io.Copy(part, file); err != nil {
-			return fmt.Errorf("error copying file to Telegram request: %v", err)
-		}
+        if _, err := io.Copy(part, file); err != nil {
+            return fmt.Errorf("error copying file to Telegram request: %v", err)
+        }
 
-		if err := writer.Close(); err != nil {
-			return fmt.Errorf("error finalizing Telegram request: %v", err)
-		}
+        if err := writer.Close(); err != nil {
+            return fmt.Errorf("error finalizing Telegram request: %v", err)
+        }
 
-		req, err := http.NewRequest("POST", reqURL, &requestBody)
-		if err != nil {
-			return fmt.Errorf("error creating Telegram request: %v", err)
-		}
+        req, err := http.NewRequest("POST", reqURL, &requestBody)
+        if err != nil {
+            return fmt.Errorf("error creating Telegram request: %v", err)
+        }
 
-		req.Header.Set("Content-Type", writer.FormDataContentType())
+        req.Header.Set("Content-Type", writer.FormDataContentType())
 
-		resp, err := cm.httpClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("error sending clip to Telegram: %v", err)
-		}
-		defer resp.Body.Close()
+        resp, err := cm.httpClient.Do(req)
+        if err != nil {
+            return fmt.Errorf("error sending clip to Telegram: %v", err)
+        }
+        defer resp.Body.Close()
 
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		responseBody := string(bodyBytes)
+        bodyBytes, _ := io.ReadAll(resp.Body)
+        responseBody := string(bodyBytes)
 
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("telegram API error: %s - %s", resp.Status, responseBody)
-		}
+        if resp.StatusCode != http.StatusOK {
+            return fmt.Errorf("telegram API error: %s - %s", resp.Status, responseBody)
+        }
 
-		cm.log.Success("Clip successfully sent to Telegram")
-		return nil
-	}
+        cm.log.Success("Clip successfully sent to Telegram")
+        return nil
+    }
 
-	return cm.RetryOperation(operation, "Telegram")
+    return cm.RetryOperation(operation, "Telegram")
 }
 
-// sendToMattermost sends a clip to Mattermost
-func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelID string, req ClipRequest) error {
-	operation := func() error {
-		file, err := os.Open(filePath)
-		if err != nil {
-			return fmt.Errorf("could not open file for sending to Mattermost: %v", err)
-		}
-		defer file.Close()
+func (cm *ClipManager) sendToMattermost(filePath, mattermostURL, token, channelID string, r *http.Request) error {
+    operation := func() error {
+        file, err := os.Open(filePath)
+        if err != nil {
+            return fmt.Errorf("could not open file for sending to Mattermost: %v", err)
+        }
+        defer file.Close()
 
-		var requestBody bytes.Buffer
-		writer := multipart.NewWriter(&requestBody)
+        var requestBody bytes.Buffer
+        writer := multipart.NewWriter(&requestBody)
 
-		if err := writer.WriteField("channel_id", channelID); err != nil {
-			return fmt.Errorf("error preparing Mattermost request: %v", err)
-		}
+        if err := writer.WriteField("channel_id", channelID); err != nil {
+            return fmt.Errorf("error preparing Mattermost request: %v", err)
+        }
 
-		part, err := writer.CreateFormFile("files", filepath.Base(filePath))
-		if err != nil {
-			return fmt.Errorf("error creating file field for Mattermost: %v", err)
-		}
+        part, err := writer.CreateFormFile("files", filepath.Base(filePath))
+        if err != nil {
+            return fmt.Errorf("error creating file field for Mattermost: %v", err)
+        }
 
-		if _, err := io.Copy(part, file); err != nil {
-			return fmt.Errorf("error copying file to Mattermost request: %v", err)
-		}
+        if _, err := io.Copy(part, file); err != nil {
+            return fmt.Errorf("error copying file to Mattermost request: %v", err)
+        }
 
-		if err := writer.Close(); err != nil {
-			return fmt.Errorf("error finalizing Mattermost request: %v", err)
-		}
+        if err := writer.Close(); err != nil {
+            return fmt.Errorf("error finalizing Mattermost request: %v", err)
+        }
 
-		fileUploadURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
-		cm.log.Info("Uploading file to Mattermost")
+        fileUploadURL := fmt.Sprintf("%s/api/v4/files", mattermostURL)
+        cm.log.Info("Uploading file to Mattermost")
 
-		req, err := http.NewRequest("POST", fileUploadURL, &requestBody)
-		if err != nil {
-			return fmt.Errorf("error creating Mattermost upload request: %v", err)
-		}
+        req, err := http.NewRequest("POST", fileUploadURL, &requestBody)
+        if err != nil {
+            return fmt.Errorf("error creating Mattermost upload request: %v", err)
+        }
 
-		req.Header.Set("Content-Type", writer.FormDataContentType())
-		req.Header.Set("Authorization", "Bearer "+token)
+        req.Header.Set("Content-Type", writer.FormDataContentType())
+        req.Header.Set("Authorization", "Bearer "+token)
 
-		resp, err := cm.httpClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("error uploading to Mattermost: %v", err)
-		}
-		defer resp.Body.Close()
+        resp, err := cm.httpClient.Do(req)
+        if err != nil {
+            return fmt.Errorf("error uploading to Mattermost: %v", err)
+        }
+        defer resp.Body.Close()
 
-		if resp.StatusCode >= 300 {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("mattermost file upload error: %s - %s", resp.Status, string(bodyBytes))
-		}
+        if resp.StatusCode >= 300 {
+            bodyBytes, _ := io.ReadAll(resp.Body)
+            return fmt.Errorf("mattermost file upload error: %s - %s", resp.Status, string(bodyBytes))
+        }
 
-		var fileResponse struct {
-			FileInfos []struct {
-				ID string `json:"id"`
-			} `json:"file_infos"`
-		}
+        var fileResponse struct {
+            FileInfos []struct {
+                ID string `json:"id"`
+            } `json:"file_infos"`
+        }
 
-		if err := json.NewDecoder(resp.Body).Decode(&fileResponse); err != nil {
-			return fmt.Errorf("error parsing Mattermost response: %v", err)
-		}
+        if err := json.NewDecoder(resp.Body).Decode(&fileResponse); err != nil {
+            return fmt.Errorf("error parsing Mattermost response: %v", err)
+        }
 
-		if len(fileResponse.FileInfos) == 0 {
-			return fmt.Errorf("no file IDs returned from Mattermost")
-		}
+        if len(fileResponse.FileInfos) == 0 {
+            return fmt.Errorf("no file IDs returned from Mattermost")
+        }
 
-		messageText := cm.buildClipMessage(req)
+        messageText := cm.buildClipMessage(r)
 
-		fileIDs := make([]string, len(fileResponse.FileInfos))
-		for i, fileInfo := range fileResponse.FileInfos {
-			fileIDs[i] = fileInfo.ID
-		}
+        fileIDs := make([]string, len(fileResponse.FileInfos))
+        for i, fileInfo := range fileResponse.FileInfos {
+            fileIDs[i] = fileInfo.ID
+        }
 
-		postData := map[string]interface{}{
-			"channel_id": channelID,
-			"message":    messageText,
-			"file_ids":   fileIDs,
-		}
+        postData := map[string]interface{}{
+            "channel_id": channelID,
+            "message":    messageText,
+            "file_ids":   fileIDs,
+        }
 
-		postJSON, err := json.Marshal(postData)
-		if err != nil {
-			return fmt.Errorf("error creating post JSON: %v", err)
-		}
+        postJSON, err := json.Marshal(postData)
+        if err != nil {
+            return fmt.Errorf("error creating post JSON: %v", err)
+        }
 
-		postURL := fmt.Sprintf("%s/api/v4/posts", mattermostURL)
-		postReq, err := http.NewRequest("POST", postURL, bytes.NewBuffer(postJSON))
-		if err != nil {
-			return fmt.Errorf("error creating post request: %v", err)
-		}
+        postURL := fmt.Sprintf("%s/api/v4/posts", mattermostURL)
+        postReq, err := http.NewRequest("POST", postURL, bytes.NewBuffer(postJSON))
+        if err != nil {
+            return fmt.Errorf("error creating post request: %v", err)
+        }
 
-		postReq.Header.Set("Content-Type", "application/json")
-		postReq.Header.Set("Authorization", "Bearer "+token)
+        postReq.Header.Set("Content-Type", "application/json")
+        postReq.Header.Set("Authorization", "Bearer "+token)
 
-		postResp, err := cm.httpClient.Do(postReq)
-		if err != nil {
-			return fmt.Errorf("error creating Mattermost post: %v", err)
-		}
-		defer postResp.Body.Close()
+        postResp, err := cm.httpClient.Do(postReq)
+        if err != nil {
+            return fmt.Errorf("error creating Mattermost post: %v", err)
+        }
+        defer postResp.Body.Close()
 
-		if postResp.StatusCode >= 300 {
-			bodyBytes, _ := io.ReadAll(postResp.Body)
-			return fmt.Errorf("mattermost post creation error: %s - %s", postResp.Status, string(bodyBytes))
-		}
+        if postResp.StatusCode >= 300 {
+            bodyBytes, _ := io.ReadAll(postResp.Body)
+            return fmt.Errorf("mattermost post creation error: %s - %s", postResp.Status, string(bodyBytes))
+        }
 
-		cm.log.Success("Clip successfully sent to Mattermost")
-		return nil
-	}
+        cm.log.Success("Clip successfully sent to Mattermost")
+        return nil
+    }
 
-	return cm.RetryOperation(operation, "Mattermost")
+    return cm.RetryOperation(operation, "Mattermost")
 }
 
-// sendToDiscord sends a clip to Discord
-func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, req ClipRequest) error {
-	operation := func() error {
-		file, err := os.Open(filePath)
-		if err != nil {
-			return fmt.Errorf("could not open file for sending to Discord: %v", err)
-		}
-		defer file.Close()
+func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, r *http.Request) error {
+    operation := func() error {
+        file, err := os.Open(filePath)
+        if err != nil {
+            return fmt.Errorf("could not open file for sending to Discord: %v", err)
+        }
+        defer file.Close()
 
-		messageText := cm.buildClipMessage(req)
+        messageText := cm.buildClipMessage(r)
 
-		var requestBody bytes.Buffer
-		writer := multipart.NewWriter(&requestBody)
+        var requestBody bytes.Buffer
+        writer := multipart.NewWriter(&requestBody)
 
-		if err := writer.WriteField("content", messageText); err != nil {
-			return fmt.Errorf("error adding content to Discord request: %v", err)
-		}
+        if err := writer.WriteField("content", messageText); err != nil {
+            return fmt.Errorf("error adding content to Discord request: %v", err)
+        }
 
-		part, err := writer.CreateFormFile("file", filepath.Base(filePath))
-		if err != nil {
-			return fmt.Errorf("error creating file field for Discord: %v", err)
-		}
+        part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+        if err != nil {
+            return fmt.Errorf("error creating file field for Discord: %v", err)
+        }
 
-		if _, err := io.Copy(part, file); err != nil {
-			return fmt.Errorf("error copying file to Discord request: %v", err)
-		}
+        if _, err := io.Copy(part, file); err != nil {
+            return fmt.Errorf("error copying file to Discord request: %v", err)
+        }
 
-		if err := writer.Close(); err != nil {
-			return fmt.Errorf("error finalizing Discord request: %v", err)
-		}
+        if err := writer.Close(); err != nil {
+            return fmt.Errorf("error finalizing Discord request: %v", err)
+        }
 
-		cm.log.Info("Sending clip to Discord. File: %s", filepath.Base(filePath))
+        cm.log.Info("Sending clip to Discord. File: %s", filepath.Base(filePath))
 
-		req, err := http.NewRequest("POST", webhookURL, &requestBody)
-		if err != nil {
-			return fmt.Errorf("error creating Discord request: %v", err)
-		}
+        req, err := http.NewRequest("POST", webhookURL, &requestBody)
+        if err != nil {
+            return fmt.Errorf("error creating Discord request: %v", err)
+        }
 
-		req.Header.Set("Content-Type", writer.FormDataContentType())
+        req.Header.Set("Content-Type", writer.FormDataContentType())
 
-		resp, err := cm.httpClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("error sending to Discord: %v", err)
-		}
-		defer resp.Body.Close()
+        resp, err := cm.httpClient.Do(req)
+        if err != nil {
+            return fmt.Errorf("error sending to Discord: %v", err)
+        }
+        defer resp.Body.Close()
 
-		if resp.StatusCode >= 300 {
-			bodyBytes, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("discord API error: %s - %s", resp.Status, string(bodyBytes))
-		}
+        if resp.StatusCode >= 300 {
+            bodyBytes, _ := io.ReadAll(resp.Body)
+            return fmt.Errorf("discord API error: %s - %s", resp.Status, string(bodyBytes))
+        }
 
-		cm.log.Success("Clip successfully sent to Discord")
-		return nil
-	}
+        cm.log.Success("Clip successfully sent to Discord")
+        return nil
+    }
 
-	return cm.RetryOperation(operation, "Discord")
+    return cm.RetryOperation(operation, "Discord")
 }
 
-// SendToChatApp sends the clip to the appropriate chat apps
-func (cm *ClipManager) SendToChatApp(originalFilePath string, req ClipRequest) error {
-	chatApps := strings.Split(strings.ToLower(req.ChatApps), ",")
+func (cm *ClipManager) SendToChatApp(originalFilePath string, r *http.Request) error {
+    chatApps := strings.ToLower(r.URL.Query().Get("chat_app"))
+    if chatApps == "" && r.Method == http.MethodPost {
+        var req ClipRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+            chatApps = strings.ToLower(req.ChatApps)
+        }
+        r.Body = io.NopCloser(bytes.NewBuffer([]byte{}))
+    }
 
-	var wg sync.WaitGroup
-	errors := make(chan error, len(chatApps))
-	compressedFiles := make(map[string]string)
+    chatAppList := strings.Split(chatApps, ",")
 
-	for _, app := range chatApps {
-		app = strings.TrimSpace(app)
+    var wg sync.WaitGroup
+    errors := make(chan error, len(chatAppList))
+    compressedFiles := make(map[string]string)
 
-		filePath, err := cm.PrepareClipForChatApp(originalFilePath, app)
-		if err != nil {
-			cm.log.Error("Error preparing clip for %s: %v", app, err)
-			errors <- fmt.Errorf("error preparing clip for %s: %v", app, err)
-			continue
-		}
+    for _, app := range chatAppList {
+        app = strings.TrimSpace(app)
 
-		if filePath != originalFilePath {
-			compressedFiles[app] = filePath
-		}
+        filePath, err := cm.PrepareClipForChatApp(originalFilePath, app)
+        if err != nil {
+            cm.log.Error("Error preparing clip for %s: %v", app, err)
+            errors <- fmt.Errorf("error preparing clip for %s: %v", app, err)
+            continue
+        }
 
-		wg.Add(1)
-		go func(app, filePath string) {
-			defer wg.Done()
+        if filePath != originalFilePath {
+            compressedFiles[app] = filePath
+        }
 
-			var err error
-			switch app {
-			case "telegram":
-				err = cm.sendToTelegram(filePath, req.TelegramBotToken, req.TelegramChatID, req)
-			case "mattermost":
-				err = cm.sendToMattermost(filePath, req.MattermostURL, req.MattermostToken, req.MattermostChannel, req)
-			case "discord":
-				err = cm.sendToDiscord(filePath, req.DiscordWebhookURL, req)
-			default:
-				err = fmt.Errorf("unsupported chat app: %s", app)
-			}
+        wg.Add(1)
+        go func(app, filePath string) {
+            defer wg.Done()
 
-			if err != nil {
-				cm.log.Error("Error sending clip to %s: %v", app, err)
-				errors <- fmt.Errorf("error sending to %s: %v", app, err)
-			} else {
-				cm.log.Success("Successfully sent clip to %s", app)
-			}
-		}(app, filePath)
-	}
+            var err error
+            switch app {
+            case "telegram":
+                botToken := r.URL.Query().Get("telegram_bot_token")
+                chatID := r.URL.Query().Get("telegram_chat_id")
+                err = cm.sendToTelegram(filePath, botToken, chatID, r)
+            case "mattermost":
+                url := r.URL.Query().Get("mattermost_url")
+                token := r.URL.Query().Get("mattermost_token")
+                channel := r.URL.Query().Get("mattermost_channel")
+                err = cm.sendToMattermost(filePath, url, token, channel, r)
+            case "discord":
+                webhookURL := r.URL.Query().Get("discord_webhook_url")
+                err = cm.sendToDiscord(filePath, webhookURL, r)
+            default:
+                err = fmt.Errorf("unsupported chat app: %s", app)
+            }
 
-	wg.Wait()
-	close(errors)
+            if err != nil {
+                cm.log.Error("Error sending clip to %s: %v", app, err)
+                errors <- fmt.Errorf("error sending to %s: %v", app, err)
+            } else {
+                cm.log.Success("Successfully sent clip to %s", app)
+            }
+        }(app, filePath)
+    }
 
-	for app, filePath := range compressedFiles {
-		cm.log.Info("Cleaning up compressed file for %s: %s", app, filePath)
-		os.Remove(filePath)
-	}
+    wg.Wait()
+    close(errors)
 
-	var errList []string
-	for err := range errors {
-		errList = append(errList, err.Error())
-	}
+    for app, filePath := range compressedFiles {
+        cm.log.Info("Cleaning up compressed file for %s: %s", app, filePath)
+        os.Remove(filePath)
+    }
 
-	if len(errList) > 0 {
-		return fmt.Errorf("errors sending clip: %s", strings.Join(errList, "; "))
-	}
+    var errList []string
+    for err := range errors {
+        errList = append(errList, err.Error())
+    }
 
-	return nil
+    if len(errList) > 0 {
+        return fmt.Errorf("errors sending clip: %s", strings.Join(errList, "; "))
+    }
+
+    return nil
 }
 
-// buildClipMessage constructs the message for chat apps with new fields
-func (cm *ClipManager) buildClipMessage(req ClipRequest) string {
-	base := fmt.Sprintf("New %sClip: %s", optionalCategory(req.Category), cm.formatCurrentTime())
+func (cm *ClipManager) buildClipMessage(r *http.Request) string {
+    var category, team1, team2, additionalText string
 
-	var teams string
-	if req.Team1 != "" && req.Team2 != "" {
-		teams = fmt.Sprintf(" / %s vs %s", req.Team1, req.Team2)
-	}
+    if r.Method == http.MethodGet {
+        category = r.URL.Query().Get("category")
+        team1 = r.URL.Query().Get("team1")
+        team2 = r.URL.Query().Get("team2")
+        additionalText = r.URL.Query().Get("additional_text")
+    } else if r.Method == http.MethodPost {
+        // Voor POST moeten we de body opnieuw parsen als we geen ClipRequest gebruiken
+        var req ClipRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+            category = req.Category
+            team1 = req.Team1
+            team2 = req.Team2
+            additionalText = req.AdditionalText
+        }
+        // Reset de body zodat deze opnieuw gelezen kan worden elders
+        r.Body = io.NopCloser(bytes.NewBuffer([]byte{}))
+    }
 
-	var extra string
-	if req.AdditionalText != "" {
-		extra = fmt.Sprintf(" - %s", req.AdditionalText)
-	}
+    base := fmt.Sprintf("New %sClip: %s", optionalCategory(category), cm.formatCurrentTime())
 
-	return base + teams + extra
+    var teams string
+    if team1 != "" && team2 != "" {
+        teams = fmt.Sprintf(" / %s vs %s", team1, team2)
+    }
+
+    var extra string
+    if additionalText != "" {
+        extra = fmt.Sprintf(" - %s", additionalText)
+    }
+
+    return base + teams + extra
 }
 
 // optionalCategory adds a space if category is present
@@ -1293,7 +1278,6 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+containerPort, nil))
 }
 
-// getHostPort determines the external port that users should connect to
 func getHostPort() string {
 	hostPort := os.Getenv("HOST_PORT")
 	if hostPort == "" {
