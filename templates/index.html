@@ -23,10 +23,6 @@
     <div id="form-tab" class="tab-content active">
         <form id="clipForm">
             <div class="form-group">
-                <label>Camera IP:</label>
-                <input type="text" id="camera_ip" required>
-            </div>
-            <div class="form-group">
                 <label>Backtrack Seconds:</label>
                 <input type="number" id="backtrack_seconds" value="10" min="0" max="300">
             </div>
@@ -47,9 +43,18 @@
                 <input type="text" id="category">
             </div>
             <div class="form-group">
-                <label><input type="checkbox" id="poolmanager_connection"> PoolManager Connection</label>
+                <label>Team 1 (optional):</label>
+                <input type="text" id="team1">
             </div>
-            
+            <div class="form-group">
+                <label>Team 2 (optional):</label>
+                <input type="text" id="team2">
+            </div>
+            <div class="form-group">
+                <label>Additional Text (optional):</label>
+                <input type="text" id="additional_text">
+            </div>
+
             <!-- Dynamic fields that will appear based on selected chat apps -->
             <div id="chat-app-fields">
                 <!-- Telegram fields -->
@@ -160,7 +165,7 @@
                 return;
             }
             fetch('/api/clip', {
-                method: 'POST',
+                method: 'POST', // Kan ook GET zijn, afhankelijk van backend
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(savedData)
             })
@@ -188,7 +193,6 @@
                 
                 navigator.clipboard.writeText(textToCopy)
                     .then(() => {
-                        // Visual feedback
                         const originalText = this.textContent;
                         this.textContent = "Copied!";
                         setTimeout(() => {
@@ -202,19 +206,19 @@
         });
 
         function collectFormData() {
-            // Get the selected chat apps
             const selectedApps = [];
             document.querySelectorAll('.chat-app-checkbox:checked').forEach(checkbox => {
                 selectedApps.push(checkbox.value);
             });
 
             const data = {
-                camera_ip: document.getElementById('camera_ip').value,
                 backtrack_seconds: parseInt(document.getElementById('backtrack_seconds').value),
                 duration_seconds: parseInt(document.getElementById('duration_seconds').value),
                 chat_app: selectedApps.join(','),
                 category: document.getElementById('category').value,
-                poolmanager_connection: document.getElementById('poolmanager_connection').checked
+                team1: document.getElementById('team1').value,
+                team2: document.getElementById('team2').value,
+                additional_text: document.getElementById('additional_text').value
             };
 
             // Add app-specific parameters based on selection
@@ -239,12 +243,14 @@
         function updateIntegrationTab() {
             const url = new URL('/api/clip', window.location.origin);
             for (const [k, v] of Object.entries(savedData)) {
-                url.searchParams.set(k, v);
+                if (v !== '' && v !== false) { // Alleen niet-lege waarden toevoegen
+                    url.searchParams.set(k, v);
+                }
             }
             
-            const htmlCode = `<button onclick=\"fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)\">Record Clip</button>`;
+            const htmlCode = `<button onclick="fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)">Record Clip</button>`;
             document.getElementById('htmlCode').textContent = htmlCode;
-            document.getElementById('curlCode').textContent = `curl \"${url.toString()}\"`;
+            document.getElementById('curlCode').textContent = `curl "${url.toString()}"`;
             const qr = qrcode(0, 'L');
             qr.addData(url.toString());
             qr.make();
