@@ -98,15 +98,11 @@
             </div>
             
             <button type="button" id="saveBtn">Save</button>
-            <button type="button" id="recordBtn">Record Clip</button>
+            <button type="button" id="recordBtn">Record Clip</button>        
         </form>
     </div>
 
     <div id="integration-tab" class="tab-content">
-        <div class="section">
-            <h3>QR Code</h3>
-            <div id="qrcode">Please save configuration first.</div>
-        </div>
         <div class="section">
             <h3>HTML Button Code</h3>
             <div class="code-container">
@@ -123,54 +119,66 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
     <script>
         let savedData = null;
 
-        // Show/hide chat app fields based on selection
-        document.querySelectorAll('.chat-app-checkbox').forEach(checkbox => {
-            checkbox.addEventListener('change', function() {
-                const appName = this.value;
-                const fieldsDiv = document.getElementById(appName + '-fields');
-                
-                if (this.checked) {
-                    fieldsDiv.style.display = 'block';
-                } else {
-                    fieldsDiv.style.display = 'none';
-                }
+        function collectFormData() {
+            const selectedApps = [];
+            document.querySelectorAll('.chat-app-checkbox:checked').forEach(checkbox => {
+                selectedApps.push(checkbox.value);
             });
-        });
 
-        document.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', function () {
-                if (this.dataset.tab === 'integration-tab' && !savedData) {
-                    alert('Please save your configuration first.');
-                    return;
-                }
-                document.querySelectorAll('.tab, .tab-content').forEach(el => el.classList.remove('active'));
-                this.classList.add('active');
-                document.getElementById(this.dataset.tab).classList.add('active');
-                if (this.dataset.tab === 'integration-tab') updateIntegrationTab();
-            });
-        });
+            const data = {
+                backtrack_seconds: parseInt(document.getElementById('backtrack_seconds').value) || 10,
+                duration_seconds: parseInt(document.getElementById('duration_seconds').value) || 10,
+                chat_app: selectedApps.join(','),
+                category: document.getElementById('category').value,
+                team1: document.getElementById('team1').value,
+                team2: document.getElementById('team2').value,
+                additional_text: document.getElementById('additional_text').value
+            };
 
-        document.getElementById('saveBtn').addEventListener('click', function () {
-            savedData = collectFormData();
-            alert('Configuration saved!');
-        });
-
-        document.getElementById('recordBtn').addEventListener('click', function () {
-            if (!savedData) {
-                alert('Please save your configuration first.');
-                return;
+            if (selectedApps.includes('telegram')) {
+                data.telegram_bot_token = document.getElementById('telegram_bot_token').value;
+                data.telegram_chat_id = document.getElementById('telegram_chat_id').value;
             }
-            fetch('/api/clip', {
-                method: 'POST', // Kan ook GET zijn, afhankelijk van backend
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(savedData)
+
+            if (selectedApps.includes('mattermost')) {
+                data.mattermost_url = document.getElementById('mattermost_url').value;
+                data.mattermost_token = document.getElementById('mattermost_token').value;
+                data.mattermost_channel = document.getElementById('mattermost_channel').value;
+            }
+
+            if (selectedApps.includes('discord')) {
+                data.discord_webhook_url = document.getElementById('discord_webhook_url').value;
+            }
+
+            return data;
+        }
+
+        function recordClip() {
+            const formData = collectFormData();
+            const url = new URL('/api/clip', window.location.origin);
+            for (const [key, value] of Object.entries(formData)) {
+                if (value !== '' && value !== false) {
+                    url.searchParams.set(key, value);
+                }
+            }
+
+            fetch(url.toString(), {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json'
+                }
             })
-            .then(resp => resp.ok ? resp.json() : Promise.reject(resp.text()))
-            .then(() => {
+            .then(resp => {
+                if (resp.ok) {
+                    return resp.json().catch(() => ({ message: 'Response OK but not JSON' }));
+                } else {
+                    return resp.text().then(text => Promise.reject(text));
+                }
+            })
+            .then(data => {
                 document.getElementById('successMessage').style.display = 'block';
                 setTimeout(() => {
                     document.getElementById('successMessage').style.display = 'none';
@@ -183,78 +191,63 @@
                     document.getElementById('errorMessage').style.display = 'none';
                 }, 5000);
             });
-        });
-
-        // Copy button functionality
-        document.querySelectorAll('.copy-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const targetId = this.getAttribute('data-target');
-                const textToCopy = document.getElementById(targetId).textContent;
-                
-                navigator.clipboard.writeText(textToCopy)
-                    .then(() => {
-                        const originalText = this.textContent;
-                        this.textContent = "Copied!";
-                        setTimeout(() => {
-                            this.textContent = originalText;
-                        }, 1500);
-                    })
-                    .catch(err => {
-                        console.error('Failed to copy: ', err);
-                    });
-            });
-        });
-
-        function collectFormData() {
-            const selectedApps = [];
-            document.querySelectorAll('.chat-app-checkbox:checked').forEach(checkbox => {
-                selectedApps.push(checkbox.value);
-            });
-
-            const data = {
-                backtrack_seconds: parseInt(document.getElementById('backtrack_seconds').value),
-                duration_seconds: parseInt(document.getElementById('duration_seconds').value),
-                chat_app: selectedApps.join(','),
-                category: document.getElementById('category').value,
-                team1: document.getElementById('team1').value,
-                team2: document.getElementById('team2').value,
-                additional_text: document.getElementById('additional_text').value
-            };
-
-            // Add app-specific parameters based on selection
-            if (selectedApps.includes('telegram')) {
-                data.telegram_bot_token = document.getElementById('telegram_bot_token').value;
-                data.telegram_chat_id = document.getElementById('telegram_chat_id').value;
-            }
-            
-            if (selectedApps.includes('mattermost')) {
-                data.mattermost_url = document.getElementById('mattermost_url').value;
-                data.mattermost_token = document.getElementById('mattermost_token').value;
-                data.mattermost_channel = document.getElementById('mattermost_channel').value;
-            }
-            
-            if (selectedApps.includes('discord')) {
-                data.discord_webhook_url = document.getElementById('discord_webhook_url').value;
-            }
-
-            return data;
         }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            document.querySelectorAll('.chat-app-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function () {
+                    const fields = document.getElementById(this.value + '-fields');
+                    fields.style.display = this.checked ? 'block' : 'none';
+                });
+            });
+
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', function () {
+                    if (this.dataset.tab === 'integration-tab' && !savedData) {
+                        alert('Please save your configuration first.');
+                        return;
+                    }
+                    document.querySelectorAll('.tab, .tab-content').forEach(el => el.classList.remove('active'));
+                    this.classList.add('active');
+                    document.getElementById(this.dataset.tab).classList.add('active');
+                    if (this.dataset.tab === 'integration-tab') updateIntegrationTab();
+                });
+            });
+
+            document.getElementById('saveBtn').addEventListener('click', function () {
+                savedData = collectFormData();
+                alert('Configuration saved!');
+            });
+
+            document.getElementById('recordBtn').addEventListener('click', function (e) {
+                e.preventDefault();
+                recordClip();
+            });
+
+            document.querySelectorAll('.copy-btn').forEach(button => {
+                button.addEventListener('click', function () {
+                    const targetId = this.getAttribute('data-target');
+                    const text = document.getElementById(targetId).textContent;
+                    navigator.clipboard.writeText(text)
+                        .then(() => {
+                            const original = this.textContent;
+                            this.textContent = 'Copied!';
+                            setTimeout(() => { this.textContent = original; }, 1500);
+                        });
+                });
+            });
+        });
 
         function updateIntegrationTab() {
             const url = new URL('/api/clip', window.location.origin);
             for (const [k, v] of Object.entries(savedData)) {
-                if (v !== '' && v !== false) { // Alleen niet-lege waarden toevoegen
+                if (v !== '' && v !== false) {
                     url.searchParams.set(k, v);
                 }
             }
-            
-            const htmlCode = `<button onclick="fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)">Record Clip</button>`;
-            document.getElementById('htmlCode').textContent = htmlCode;
+
+            document.getElementById('htmlCode').textContent = `<button onclick="fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)">Record Clip</button>`;
             document.getElementById('curlCode').textContent = `curl "${url.toString()}"`;
-            const qr = qrcode(0, 'L');
-            qr.addData(url.toString());
-            qr.make();
-            document.getElementById('qrcode').innerHTML = qr.createImgTag(6);
         }
     </script>
 </body>
