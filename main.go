@@ -523,14 +523,14 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 			lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
 
 			if firstSegmentStart.After(startTime) || lastSegmentEnd.Before(endTime) {
-				cm.log.Warning("⚠️ Not enough segments to cover full range, waiting for more segments...")
+				cm.log.Warning("Not enough segments to cover full range, waiting for more segments...")
 				continue
 			}
 
 			break
 		}
 
-		cm.log.Warning("⚠️ No overlapping segments found, waiting for more segments...")
+		cm.log.Warning("No overlapping segments found, waiting for more segments...")
 		select {
 		case newSegment := <-cm.segmentChan:
 			cm.log.Info("📼 Received new segment: %s", newSegment.Path)

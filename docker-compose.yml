@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: automated4u/clipmanager:latest
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - TZ=Europe/Amsterdam
     ports:
       - "${HOST_PORT}:5000"
     restart: unless-stopped
