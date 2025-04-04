@@ -467,13 +467,13 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 	var neededSegments []SegmentInfo
 	cm.log.Info("Starting segment selection...")
 	for {
-		cm.log.Info("Starting RLock")
+		cm.log.Info("Starting R-Lock")
 		cm.segmentsMutex.RLock()
 		segments := make([]SegmentInfo, len(cm.segments))
 		cm.log.Info("Starting copy")
 		copy(segments, cm.segments)
 		cm.segmentsMutex.RUnlock()
-		cm.log.Info("Starting Runlock")
+		cm.log.Info("Starting R-unlock")
 
 		if len(segments) == 0 {
 			cm.log.Warning("⚠️ No segments available, waiting for first segment...")
@@ -527,6 +527,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 			lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
 
 			if firstSegmentStart.After(startTime) || lastSegmentEnd.Before(endTime) {
+				cm.log.Warning("neededSegments: ", neededSegments, "firstSegmentStart: ", firstSegmentStart.Format("15:04:05") "lastSegmentEnd: ", lastSegmentEnd.Format("15:04:05"))
 				cm.log.Warning("Not enough segments to cover full range, waiting for more segments...")
 				continue
 			}
