@@ -43,27 +43,27 @@ The PowerShell script (`clipmanager.ps1`) needs to know where the ClipManager se
    ```json
    {
      "ServerUrl": "http://localhost:5001",
-     "ChatApp": "",
+     "ChatApp": "mattermost",
      "ChatAppConfig": {
-       "mattermost_url": "",
-       "mattermost_channel": "",
-       "mattermost_token": "",
+       "mattermost_url": "https://mm.bulbmanager.nl",
+       "mattermost_channel": "ncfgok4y8irojjie4a167x1xee",
+       "mattermost_token": "uzo5effnsfyq38qg486h6p5r7y",
        "telegram_bot_token": "",
        "telegram_chat_id": "",
        "discord_webhook_url": ""
      },
      "BacktrackSeconds": 60,
      "DurationSeconds": 60,
-     "Team1": "",
-     "Team2": "",
-     "AdditionalText": ""
+     "Team1": "Team A",
+     "Team2": "Team B",
+     "AdditionalText": "Great moment in the game!"
    }
    ```
 2. Update the following fields:
    - **ServerUrl**: Replace `http://localhost:5001` with the URL of your ClipManager server (noted during the server setup in `README.md`). Examples:
      - If the server is running locally: `"ServerUrl": "http://localhost:5001"`
      - If the server is on another machine: `"ServerUrl": "http://192.168.1.100:5001"`
-     - If you’re using a domain: `"ServerUrl": "http://clip.your-server.com"`
+     - If you’re using a domain: `"ServerUrl": "http://clip.your-server.com:5001"`
    - **ChatApp**: Specify the chat platform to send clips to. Valid options are:
      - `"mattermost"`
      - `"telegram"`
@@ -89,7 +89,7 @@ The PowerShell script (`clipmanager.ps1`) needs to know where the ClipManager se
    ```json
    {
      "ServerUrl": "http://192.168.1.100:5001",
-     "ChatApp": " mattermost",
+     "ChatApp": "mattermost",
      "ChatAppConfig": {
        "mattermost_url": "https://mm.your-server.com",
        "mattermost_channel": "your-channel-id",
@@ -191,18 +191,31 @@ The Arduino must be programmed to communicate with the PowerShell script. Follow
 Repeat these steps for each Arduino you want to use (e.g., one for "Hype" and one for "Blunder").
 
 ### Step 4: Set Up the PowerShell Script on Your Computer
-The PowerShell script (`clipmanager.ps1`) listens for button presses and sends requests to the ClipManager server. We’ll configure it to start automatically when your computer boots.
+The PowerShell script (`clipmanager.ps1`) listens for button presses and sends requests to the ClipManager server. We’ll configure it to start automatically when your computer boots, but first, you need to run it manually to approve any security warnings.
 
-#### 4.1 Copy the Shortcut to the Startup Folder
+#### 4.1 Run the Script Manually for the First Time
+1. Navigate to the `arduino_button/` folder where you extracted the files.
+2. Double-click `shortcut_clipmanager_run.bat` to run the script manually.
+   - **Security Warning**: You may see a Windows security warning (e.g., "Windows protected your PC" or a User Account Control prompt) because the script is downloaded from the internet or requires elevated permissions to run PowerShell scripts.
+   - **Approve the Warning**:
+     - If you see a "Windows protected your PC" message (SmartScreen), click **More info** and then **Run anyway**.
+     - If you see a User Account Control (UAC) prompt asking for permission, click **Yes** to allow the script to run.
+   - The script should start, and you’ll see a PowerShell window with messages like "ClipManager is gestart en draait op de achtergrond" and "Script gestart, zoeken naar Arduino's...".
+   - If the script fails to start, you may see an error message in the command prompt window with instructions (e.g., to approve the script or check the execution policy). Follow the instructions provided.
+3. Once the script is running, you can close the PowerShell window (it will restart automatically in the next step).
+
+#### 4.2 Copy the Shortcut to the Startup Folder
 1. Open the Startup folder:
    - Press `Win + R` to open the "Run" dialog.
    - Type `shell:startup` and press Enter.
 2. Copy the file `arduino_button/shortcut_clipmanager_run.bat` to the Startup folder.
    - This ensures the script starts automatically when your computer boots.
+   - **Important**: Do not run the script from the Startup folder until you’ve completed Step 4.1. Running it manually first ensures that any security warnings are approved, so it will work correctly at startup.
 
-#### 4.2 Start the Script for the First Time
-- Double-click `arduino_button/shortcut_clipmanager_run.bat` to start the script.
-- Alternatively, restart your computer, and the script will start automatically.
+#### 4.3 Restart Your Computer to Test
+- Restart your computer to confirm that the script starts automatically.
+- After logging in, you should see the PowerShell window open with the same messages as before ("ClipManager is gestart en draait op de achtergrond").
+- If the script does not start automatically, double-check that `shortcut_clipmanager_run.bat` is in the Startup folder and that you approved the security warnings in Step 4.1.
 
 ### Step 5: Use the Button Integration
 1. Ensure your Arduino(s) are connected via USB.
@@ -223,8 +236,12 @@ The PowerShell script (`clipmanager.ps1`) listens for button presses and sends r
 ## Troubleshooting
 - **The script doesn’t start or shows an error**:
   - Check the error message in the PowerShell window. It will guide you on how to fix issues with `config.json` (e.g., missing `ServerUrl`, `ChatApp`, or chat platform credentials).
-  - Ensure `shortcut_clipmanager_run.bat` is in the Startup folder (`shell:startup`).
-  - Verify that your Arduino is connected before your computer boots.
+  - If the script fails to start when run from the Startup folder, ensure you followed Step 4.1 to run it manually first and approve any security warnings.
+  - Verify that `shortcut_clipmanager_run.bat` is in the Startup folder (`shell:startup`).
+  - Ensure that your Arduino is connected before your computer boots.
+- **I see a security warning when running the script**:
+  - This is normal the first time you run the script. Follow the instructions in Step 4.1 to approve the warning (e.g., click "More info" and "Run anyway" for SmartScreen, or "Yes" for UAC).
+  - After approving the warning, the script should run without issues, and it will work automatically from the Startup folder.
 - **The button doesn’t work**:
   - Check if the Arduino is programmed correctly (see Step 3).
   - Open Device Manager (`Win + X > Device Manager`) and confirm your Arduino is recognized (e.g., COM3 or COM4).
@@ -260,5 +277,8 @@ The PowerShell script (`clipmanager.ps1`) listens for button presses and sends r
   - Uses a button on pin 12 with `INPUT_PULLUP` to detect presses.
   - Sends "BUTTON_PRESSED" over the serial connection when the button is pressed.
   - Responds to "IDENTIFY" requests with the configured identifier (e.g., `CLIPMANAGER_HYPE`).
+- **Startup Script (`shortcut_clipmanager_run.bat`)**:
+  - Ensures the script runs in the correct directory and attempts to bypass PowerShell execution policy restrictions.
+  - Displays a message if the script fails to start, guiding the user to run it manually first.
 
 For more details on the ClipManager server, see `DEVELOPER.md`.
