@@ -137,7 +137,7 @@ function Get-Config {
     if (-not $config.BacktrackSeconds -or $config.BacktrackSeconds -lt 0 -or $config.BacktrackSeconds -gt 300) {
         Write-Host "❌ Fout: BacktrackSeconds moet een getal zijn tussen 0 en 300 in config.json."
         Write-Host "   1. Open config.json in de arduino_button map."
-        Write-Host "   2. Stel een geldige BacktrackSeconds in, bijvoorbeeld: {`"BacktrackSeconds`": 60}"
+        Write-Host "   2. Stel een geldige BacktrackSeconds in, bijvoorbeeld: {`"BacktrackSeconds`": 30}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -147,7 +147,7 @@ function Get-Config {
     if (-not $config.DurationSeconds -or $config.DurationSeconds -lt 1 -or $config.DurationSeconds -gt 300) {
         Write-Host "❌ Fout: DurationSeconds moet een getal zijn tussen 1 en 300 in config.json."
         Write-Host "   1. Open config.json in de arduino_button map."
-        Write-Host "   2. Stel een geldige DurationSeconds in, bijvoorbeeld: {`"DurationSeconds`": 60}"
+        Write-Host "   2. Stel een geldige DurationSeconds in, bijvoorbeeld: {`"DurationSeconds`": 30}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")

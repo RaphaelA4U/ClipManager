@@ -52,8 +52,8 @@ The PowerShell script (`clipmanager.ps1`) needs to know where the ClipManager se
        "telegram_chat_id": "",
        "discord_webhook_url": ""
      },
-     "BacktrackSeconds": 60,
-     "DurationSeconds": 60,
+     "BacktrackSeconds": 30,
+     "DurationSeconds": 30,
      "Team1": "Team A",
      "Team2": "Team B",
      "AdditionalText": "Great moment in the game!"
@@ -79,8 +79,8 @@ The PowerShell script (`clipmanager.ps1`) needs to know where the ClipManager se
      - For Discord:
        - `"discord_webhook_url"`: Your Discord webhook URL (e.g., `"your-webhook-url"`).
      - Leave the unused fields empty (`""`).
-   - **BacktrackSeconds**: The number of seconds to go back in the recording (0-300). Default is `60`.
-   - **DurationSeconds**: The length of the clip in seconds (1-300). Default is `60`.
+   - **BacktrackSeconds**: The number of seconds to go back in the recording (0-300). Default is `30`.
+   - **DurationSeconds**: The length of the clip in seconds (1-300). Default is `30`.
    - **Team1** (optional): The name of the first team, useful for sports clips (e.g., `"Team A"`). Leave empty (`""`) if not needed.
    - **Team2** (optional): The name of the second team (e.g., `"Team B"`). Leave empty (`""`) if not needed.
    - **AdditionalText** (optional): Additional description text to append to the clip message (e.g., `"Great moment in the game!"`). Leave empty (`""`) if not needed.
@@ -98,8 +98,8 @@ The PowerShell script (`clipmanager.ps1`) needs to know where the ClipManager se
        "telegram_chat_id": "",
        "discord_webhook_url": ""
      },
-     "BacktrackSeconds": 60,
-     "DurationSeconds": 60,
+     "BacktrackSeconds": 30,
+     "DurationSeconds": 30,
      "Team1": "Team A",
      "Team2": "Team B",
      "AdditionalText": "Great moment in the game!"

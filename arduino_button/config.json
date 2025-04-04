@@ -9,8 +9,8 @@
     "telegram_chat_id": "",
     "discord_webhook_url": ""
   },
-  "BacktrackSeconds": 60,
-  "DurationSeconds": 60,
+  "BacktrackSeconds": 30,
+  "DurationSeconds": 30,
   "Team1": "",
   "Team2": "",
   "AdditionalText": ""
