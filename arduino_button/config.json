@@ -1,0 +1,17 @@
+{
+  "ServerUrl": "http://localhost:5001",
+  "ChatApp": "",
+  "ChatAppConfig": {
+    "mattermost_url": "",
+    "mattermost_channel": "",
+    "mattermost_token": "",
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+    "discord_webhook_url": ""
+  },
+  "BacktrackSeconds": 60,
+  "DurationSeconds": 60,
+  "Team1": "",
+  "Team2": "",
+  "AdditionalText": ""
+}

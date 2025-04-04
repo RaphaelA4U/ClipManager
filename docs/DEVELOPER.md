@@ -30,7 +30,7 @@ Environment variables in `.env`:
   - `backtrack_seconds` (0-300): Seconds to go back.
   - `duration_seconds` (1-300): Clip length.
   - `chat_app`: Comma-separated list (e.g., `telegram,discord`).
-  - Platform-specific: See the main README file for platform-specific parameters.
+  - Platform-specific: See the main [README.md](README.md) for platform-specific parameters.
 
 ### Example POST Request
 ```json
@@ -75,5 +75,8 @@ Example:
 - **Dependencies**: Managed via `go.mod`.
 - **Docker**: Built in two stages (Golang builder + FFmpeg).
 - **Extending**: Add new chat apps by implementing `sendToX` methods.
+
+## Optional Button Integration
+ClipManager supports an optional button integration using an Arduino and a PowerShell script on a Windows PC to trigger clip recordings with a physical button. For details on implementation and setup, see [ARDUINO_BUTTON.md](ARDUINO_BUTTON.md).
 
 See the source code for detailed implementation.
