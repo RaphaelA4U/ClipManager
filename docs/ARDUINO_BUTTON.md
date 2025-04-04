@@ -22,14 +22,15 @@ The button integration uses an Arduino with a push button to trigger clip record
 
 ### Step 1: Download and Run the ClipManager Script
 1. Navigate to the ClipManager script in your browser:
-   - [View ClipManager Script](https://github.com/RaphaelA4U/ClipManager/blob/main/arduino_button/clipmanager.ps1)
+  - [View ClipManager Script](https://github.com/RaphaelA4U/ClipManager/blob/main/arduino_button/clipmanager.ps1)
 2. Click the **Download raw file** button on the top-right of the code view.
 3. Save the file (`clipmanager.ps1`) to your Downloads folder.
 5. Right-click the saved file and select **Run with PowerShell**.
-   - **Security Warning**: You may see a Windows security warning (e.g., "Windows protected your PC" or a User Account Control prompt) because the script is downloaded from the internet.
-   - **Approve the Warning**:
-     - If you see a "Windows protected your PC" message (SmartScreen), click **More info** and then **Run anyway**.
-     - If you see a User Account Control (UAC) prompt asking for permission, click **Yes** to allow the script to run.
+  - **Security Warning**: You may see a Windows security warning (e.g., "Windows protected your PC" or a User Account Control prompt) because the script is downloaded from the internet.
+  - **Approve the Warning**:
+    - If you see a "Windows protected your PC" message (SmartScreen), click **More info** and then **Run anyway**.
+    - If you see a User Account Control (UAC) prompt asking for permission, click **Yes** to allow the script to run.
+    - If you see a checkbox that says "Always ask before opening this file", uncheck it to prevent future warnings for this file.
 
 ### Step 2: Configure the ClipManager Settings
 1. The script will create a folder at `C:\ClipManager` and place the necessary files there.
@@ -69,7 +70,7 @@ The button integration uses an Arduino with a push button to trigger clip record
 ## Updating the Script
 If a new version of the ClipManager script is available:
 1. Download the updated `clipmanager.ps1` from the same link provided in Step 1.
-2. Double-click the new `clipmanager.ps1` to run it.
+2. Right-click the downloaded file and select **Run with PowerShell**.
 3. The script will detect that setup was already completed and skip the setup process, running the updated version immediately.
 4. Your existing `config.json` settings will be preserved.
 
