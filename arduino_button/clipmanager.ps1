@@ -1,3 +1,108 @@
+# ClipManager Button Integration Script
+
+# Check if this is the first run (setup not yet completed)
+$installDir = "C:\ClipManager"
+$setupMarker = "$installDir\setup_complete.txt"
+$firstRun = -not (Test-Path $setupMarker)
+
+if ($firstRun) {
+    # Step 1: Create the installation directory
+    if (-not (Test-Path $installDir)) {
+        New-Item -Path $installDir -ItemType Directory | Out-Null
+    }
+
+    # Step 2: Create config.json with placeholder values
+    $configPath = "$installDir\config.json"
+    if (-not (Test-Path $configPath)) {
+        $configJson = @"
+{
+  "ServerUrl": "http://localhost:5001",
+  "ChatApp": "",
+  "ChatAppConfig": {
+    "mattermost_url": "",
+    "mattermost_channel": "",
+    "mattermost_token": "",
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
+    "discord_webhook_url": ""
+  },
+  "BacktrackSeconds": 30,
+  "DurationSeconds": 30,
+  "Team1": "",
+  "Team2": "",
+  "AdditionalText": ""
+}
+"@
+        Set-Content -Path $configPath -Value $configJson
+    }
+
+    # Step 3: Prompt the user to edit config.json
+    Write-Host "ClipManager Button Integration Setup"
+    Write-Host "-----------------------------------"
+    Write-Host "Before we can proceed, you need to configure the ClipManager settings."
+    Write-Host "A file named 'config.json' has been created in: $installDir"
+    Write-Host ""
+    Write-Host "Please follow these steps:"
+    Write-Host "1. Open File Explorer and navigate to: $installDir"
+    Write-Host "2. Open 'config.json' in a text editor (e.g., Notepad)."
+    Write-Host "3. Update the following fields with your settings:"
+    Write-Host "   - 'ServerUrl': The URL of your ClipManager server (e.g., 'http://192.168.1.100:5001')."
+    Write-Host "   - 'ChatApp': The chat platform to send clips to ('mattermost', 'telegram', or 'discord')."
+    Write-Host "   - 'ChatAppConfig': The credentials for your chat platform:"
+    Write-Host "     - For Mattermost: 'mattermost_url', 'mattermost_channel', 'mattermost_token'."
+    Write-Host "     - For Telegram: 'telegram_bot_token', 'telegram_chat_id'."
+    Write-Host "     - For Discord: 'discord_webhook_url'."
+    Write-Host "   - 'BacktrackSeconds' and 'DurationSeconds': The clip timing settings (default is 60 seconds each)."
+    Write-Host "   - 'Team1', 'Team2', 'AdditionalText': Optional fields for sports clips (can be left empty)."
+    Write-Host "4. Save the file after making changes."
+    Write-Host ""
+    Write-Host "Press any key to open the folder and continue after editing..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+    # Open the folder in File Explorer
+    Start-Process "explorer.exe" -ArgumentList $installDir
+
+    # Wait for the user to press a key after editing
+    Write-Host "After editing and saving 'config.json', press any key to continue..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+
+    # Step 4: Copy the script to the installation directory
+    Copy-Item -Path $PSCommandPath -Destination "$installDir\clipmanager.ps1" -Force
+
+    # Step 5: Create the shortcut batch file
+    $shortcutPath = "$installDir\shortcut_clipmanager_run.bat"
+    $shortcutContent = @"
+@echo off
+cd /d "$installDir"
+start "" /min powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "clipmanager.ps1"
+"@
+    Set-Content -Path $shortcutPath -Value $shortcutContent
+
+    # Step 6: Copy the shortcut to the Startup folder
+    $startupFolder = [Environment]::GetFolderPath("Startup")
+    $startupShortcutPath = Join-Path -Path $startupFolder -ChildPath "shortcut_clipmanager_run.bat"
+    Copy-Item -Path $shortcutPath -Destination $startupShortcutPath -Force
+
+    # Step 7: Mark setup as complete
+    Set-Content -Path $setupMarker -Value "Setup completed on $(Get-Date)"
+
+    # Step 8: Start the script in the background
+    Write-Host "Starting the ClipManager button integration..."
+    Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$shortcutPath`"" -WindowStyle Hidden
+
+    # Step 9: Final message
+    Write-Host "Setup complete!"
+    Write-Host "The ClipManager button integration is now running in the background."
+    Write-Host "It will start automatically after every PC restart."
+    Write-Host "To confirm it's running, press Ctrl + Shift + Esc to open Task Manager and look for 'powershell.exe'."
+    Write-Host "If you need to stop the script, you can end the 'powershell.exe' process in Task Manager."
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
+
+# --- Normal script logic starts here (runs after setup or on subsequent runs) ---
+
 # Laad de System.Web assembly voor URL-codering (indien beschikbaar)
 $useSystemWeb = $true
 try {
@@ -11,9 +116,9 @@ try {
 
 $baudRate = 9600
 
-# Bepaal de server-URL en chat-configuratie
+# Bepaal de server-URL en andere configuratie
 function Get-Config {
-    $configPath = Join-Path -Path $PSScriptRoot -ChildPath "config.json"
+    $configPath = Join-Path -Path $installDir -ChildPath "config.json"
     $config = $null
 
     # 1. Probeer config.json te lezen
@@ -31,7 +136,7 @@ function Get-Config {
     # 2. Valideer de configuratie
     if (-not $config) {
         Write-Host "❌ Fout: config.json kon niet worden geladen."
-        Write-Host "   1. Zorg ervoor dat config.json bestaat in de arduino_button map."
+        Write-Host "   1. Zorg ervoor dat config.json bestaat in de ClipManager map ($installDir)."
         Write-Host "   2. Controleer of het bestand geldige JSON bevat."
         Write-Host "Druk op een toets om af te sluiten..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -41,7 +146,7 @@ function Get-Config {
     # Valideer ServerUrl
     if (-not $config.ServerUrl -or $config.ServerUrl -eq "") {
         Write-Host "❌ Fout: ServerUrl is niet ingesteld in config.json."
-        Write-Host "   1. Open config.json in de arduino_button map."
+        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
         Write-Host "   2. Stel de ServerUrl in, bijvoorbeeld: {`"ServerUrl`": `"http://jouw-server:5001`"}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
@@ -52,7 +157,7 @@ function Get-Config {
     # Valideer ChatApp
     if (-not $config.ChatApp -or $config.ChatApp -eq "") {
         Write-Host "❌ Fout: ChatApp is niet ingesteld in config.json."
-        Write-Host "   1. Open config.json in de arduino_button map."
+        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
         Write-Host "   2. Stel de ChatApp in, bijvoorbeeld: {`"ChatApp`": `"mattermost`"}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
@@ -63,7 +168,7 @@ function Get-Config {
     # Valideer ChatAppConfig
     if (-not $config.ChatAppConfig) {
         Write-Host "❌ Fout: ChatAppConfig is niet ingesteld in config.json."
-        Write-Host "   1. Open config.json in de arduino_button map."
+        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
         Write-Host "   2. Voeg een ChatAppConfig object toe met de juiste parameters voor jouw chatplatform."
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
@@ -78,7 +183,7 @@ function Get-Config {
                 -not $config.ChatAppConfig.mattermost_channel -or $config.ChatAppConfig.mattermost_channel -eq "" -or
                 -not $config.ChatAppConfig.mattermost_token -or $config.ChatAppConfig.mattermost_token -eq "") {
                 Write-Host "❌ Fout: Mattermost parameters (mattermost_url, mattermost_channel, mattermost_token) zijn niet volledig ingesteld in config.json."
-                Write-Host "   1. Open config.json in de arduino_button map."
+                Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
                 Write-Host "   2. Stel de Mattermost parameters in onder ChatAppConfig, bijvoorbeeld:"
                 Write-Host '      "ChatAppConfig": {'
                 Write-Host '        "mattermost_url": "https://mm.your-server.com",'
@@ -95,7 +200,7 @@ function Get-Config {
             if (-not $config.ChatAppConfig.telegram_bot_token -or $config.ChatAppConfig.telegram_bot_token -eq "" -or
                 -not $config.ChatAppConfig.telegram_chat_id -or $config.ChatAppConfig.telegram_chat_id -eq "") {
                 Write-Host "❌ Fout: Telegram parameters (telegram_bot_token, telegram_chat_id) zijn niet volledig ingesteld in config.json."
-                Write-Host "   1. Open config.json in de arduino_button map."
+                Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
                 Write-Host "   2. Stel de Telegram parameters in onder ChatAppConfig, bijvoorbeeld:"
                 Write-Host '      "ChatAppConfig": {'
                 Write-Host '        "telegram_bot_token": "your-bot-token",'
@@ -110,7 +215,7 @@ function Get-Config {
         "discord" {
             if (-not $config.ChatAppConfig.discord_webhook_url -or $config.ChatAppConfig.discord_webhook_url -eq "") {
                 Write-Host "❌ Fout: Discord parameter (discord_webhook_url) is niet ingesteld in config.json."
-                Write-Host "   1. Open config.json in de arduino_button map."
+                Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
                 Write-Host "   2. Stel de Discord parameter in onder ChatAppConfig, bijvoorbeeld:"
                 Write-Host '      "ChatAppConfig": {'
                 Write-Host '        "discord_webhook_url": "your-webhook-url"'
@@ -124,7 +229,7 @@ function Get-Config {
         default {
             Write-Host "❌ Fout: Ongeldige ChatApp waarde in config.json: $($config.ChatApp)"
             Write-Host "   Geldige waarden zijn: 'mattermost', 'telegram', 'discord'."
-            Write-Host "   1. Open config.json in de arduino_button map."
+            Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
             Write-Host "   2. Stel een geldige ChatApp in, bijvoorbeeld: {`"ChatApp`": `"mattermost`"}"
             Write-Host "   3. Sla het bestand op en herstart dit script."
             Write-Host "Druk op een toets om af te sluiten..."
@@ -136,8 +241,8 @@ function Get-Config {
     # Valideer BacktrackSeconds en DurationSeconds
     if (-not $config.BacktrackSeconds -or $config.BacktrackSeconds -lt 0 -or $config.BacktrackSeconds -gt 300) {
         Write-Host "❌ Fout: BacktrackSeconds moet een getal zijn tussen 0 en 300 in config.json."
-        Write-Host "   1. Open config.json in de arduino_button map."
-        Write-Host "   2. Stel een geldige BacktrackSeconds in, bijvoorbeeld: {`"BacktrackSeconds`": 30}"
+        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
+        Write-Host "   2. Stel een geldige BacktrackSeconds in, bijvoorbeeld: {`"BacktrackSeconds`": 60}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -146,49 +251,15 @@ function Get-Config {
 
     if (-not $config.DurationSeconds -or $config.DurationSeconds -lt 1 -or $config.DurationSeconds -gt 300) {
         Write-Host "❌ Fout: DurationSeconds moet een getal zijn tussen 1 en 300 in config.json."
-        Write-Host "   1. Open config.json in de arduino_button map."
-        Write-Host "   2. Stel een geldige DurationSeconds in, bijvoorbeeld: {`"DurationSeconds`": 30}"
+        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
+        Write-Host "   2. Stel een geldige DurationSeconds in, bijvoorbeeld: {`"DurationSeconds`": 60}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
 
-    # 3. Als er geen server-URL is gevonden, probeer een lokale server (bijv. http://localhost:5001)
-    $serverUrl = $config.ServerUrl
-    if (-not (Test-ServerUrl -url $serverUrl)) {
-        $localServerUrl = "http://localhost:5001"
-        Write-Host "⚠️ ServerUrl ($serverUrl) niet bereikbaar, probeer lokale server: $localServerUrl"
-        if (Test-ServerUrl -url $localServerUrl) {
-            $serverUrl = $localServerUrl
-            Write-Host "✅ Lokale server gevonden: $serverUrl"
-        } else {
-            Write-Host "❌ Lokale server niet bereikbaar: $localServerUrl"
-            Write-Host "❌ Fout: Geen geldige ServerUrl gevonden."
-            Write-Host "   1. Controleer of de ClipManager-server draait."
-            Write-Host "   2. Controleer de ServerUrl in config.json."
-            Write-Host "   3. Sla het bestand op en herstart dit script."
-            Write-Host "Druk op een toets om af te sluiten..."
-            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-            exit 1
-        }
-    }
-
     return $config
-}
-
-# Test of een server-URL bereikbaar is
-function Test-ServerUrl {
-    param($url)
-    try {
-        $response = Invoke-WebRequest -Uri "$url/api/clip" -Method Get -UseBasicParsing -TimeoutSec 2
-        if ($response.StatusCode -eq 200) {
-            return $true
-        }
-    } catch {
-        return $false
-    }
-    return $false
 }
 
 # Haal de configuratie op
@@ -209,7 +280,7 @@ if ($additionalText) { $apiEndpointBase += "&additional_text=$additionalText" }
 
 switch ($chatApp) {
     "mattermost" {
-        $mattermostUrl = $config.ChatAppConfig.mattermost_url
+        $mattermostUrl = $config.ChatAppConfig.mattermost W
         $mattermostChannel = $config.ChatAppConfig.mattermost_channel
         $mattermostToken = $config.ChatAppConfig.mattermost_token
         $apiEndpoint = "$apiEndpointBase&mattermost_url=$mattermostUrl&mattermost_channel=$mattermostChannel&mattermost_token=$mattermostToken"
@@ -347,7 +418,7 @@ function Monitor-Port {
 
 # Hoofdloop: blijf zoeken naar Arduino's
 try {
-    Write-Host "ClipManager is gestart en draait op de achtergrond. Sluit dit venster niet als je het ziet."
+    Write-Host "ClipManager is gestart en draait op de achtergrond."
     Write-Host "Script gestart, zoeken naar Arduino's..."
     while ($true) {
         # Zoek alle Arduino's
