@@ -52,7 +52,7 @@ if ($firstRun) {
     Write-Host "     - For Mattermost: 'mattermost_url', 'mattermost_channel', 'mattermost_token'."
     Write-Host "     - For Telegram: 'telegram_bot_token', 'telegram_chat_id'."
     Write-Host "     - For Discord: 'discord_webhook_url'."
-    Write-Host "   - 'BacktrackSeconds' and 'DurationSeconds': The clip timing settings (default is 60 seconds each)."
+    Write-Host "   - 'BacktrackSeconds' and 'DurationSeconds': The clip timing settings (default is 30 seconds each)."
     Write-Host "   - 'Team1', 'Team2', 'AdditionalText': Optional fields for sports clips (can be left empty)."
     Write-Host "4. Save the file after making changes."
     Write-Host ""
@@ -128,9 +128,15 @@ function Get-Config {
             Write-Host "✅ Configuratie geladen uit config.json"
         } catch {
             Write-Host "❌ Fout bij het lezen van config.json: $_"
+            Write-Host "Druk op een toets om af te sluiten..."
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit 1
         }
     } else {
-        Write-Host "⚠️ config.json niet gevonden."
+        Write-Host "❌ Fout: config.json niet gevonden in $installDir."
+        Write-Host "Druk op een toets om af te sluiten..."
+        $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        exit 1
     }
 
     # 2. Valideer de configuratie
@@ -154,8 +160,8 @@ function Get-Config {
         exit 1
     }
 
-    # Valideer ChatApp
-    if (-not $config.ChatApp -or $config.ChatApp -eq "") {
+    # Valideer ChatApp (only after setup is complete)
+    if (-not $firstRun -and (-not $config.ChatApp -or $config.ChatApp -eq "")) {
         Write-Host "❌ Fout: ChatApp is niet ingesteld in config.json."
         Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
         Write-Host "   2. Stel de ChatApp in, bijvoorbeeld: {`"ChatApp`": `"mattermost`"}"
@@ -176,65 +182,67 @@ function Get-Config {
         exit 1
     }
 
-    # Valideer platform-specifieke parameters
-    switch ($config.ChatApp.ToLower()) {
-        "mattermost" {
-            if (-not $config.ChatAppConfig.mattermost_url -or $config.ChatAppConfig.mattermost_url -eq "" -or
-                -not $config.ChatAppConfig.mattermost_channel -or $config.ChatAppConfig.mattermost_channel -eq "" -or
-                -not $config.ChatAppConfig.mattermost_token -or $config.ChatAppConfig.mattermost_token -eq "") {
-                Write-Host "❌ Fout: Mattermost parameters (mattermost_url, mattermost_channel, mattermost_token) zijn niet volledig ingesteld in config.json."
+    # Valideer platform-specifieke parameters (only after setup)
+    if (-not $firstRun) {
+        switch ($config.ChatApp.ToLower()) {
+            "mattermost" {
+                if (-not $config.ChatAppConfig.mattermost_url -or $config.ChatAppConfig.mattermost_url -eq "" -or
+                    -not $config.ChatAppConfig.mattermost_channel -or $config.ChatAppConfig.mattermost_channel -eq "" -or
+                    -not $config.ChatAppConfig.mattermost_token -or $config.ChatAppConfig.mattermost_token -eq "") {
+                    Write-Host "❌ Fout: Mattermost parameters (mattermost_url, mattermost_channel, mattermost_token) zijn niet volledig ingesteld in config.json."
+                    Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
+                    Write-Host "   2. Stel de Mattermost parameters in onder ChatAppConfig, bijvoorbeeld:"
+                    Write-Host '      "ChatAppConfig": {'
+                    Write-Host '        "mattermost_url": "https://mm.your-server.com",'
+                    Write-Host '        "mattermost_channel": "your-channel-id",'
+                    Write-Host '        "mattermost_token": "your-token"'
+                    Write-Host '      }'
+                    Write-Host "   3. Sla het bestand op en herstart dit script."
+                    Write-Host "Druk op een toets om af te sluiten..."
+                    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                    exit 1
+                }
+            }
+            "telegram" {
+                if (-not $config.ChatAppConfig.telegram_bot_token -or $config.ChatAppConfig.telegram_bot_token -eq "" -or
+                    -not $config.ChatAppConfig.telegram_chat_id -or $config.ChatAppConfig.telegram_chat_id -eq "") {
+                    Write-Host "❌ Fout: Telegram parameters (telegram_bot_token, telegram_chat_id) zijn niet volledig ingesteld in config.json."
+                    Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
+                    Write-Host "   2. Stel de Telegram parameters in onder ChatAppConfig, bijvoorbeeld:"
+                    Write-Host '      "ChatAppConfig": {'
+                    Write-Host '        "telegram_bot_token": "your-bot-token",'
+                    Write-Host '        "telegram_chat_id": "your-chat-id"'
+                    Write-Host '      }'
+                    Write-Host "   3. Sla het bestand op en herstart dit script."
+                    Write-Host "Druk op een toets om af te sluiten..."
+                    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                    exit 1
+                }
+            }
+            "discord" {
+                if (-not $config.ChatAppConfig.discord_webhook_url -or $config.ChatAppConfig.discord_webhook_url -eq "") {
+                    Write-Host "❌ Fout: Discord parameter (discord_webhook_url) is niet ingesteld in config.json."
+                    Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
+                    Write-Host "   2. Stel de Discord parameter in onder ChatAppConfig, bijvoorbeeld:"
+                    Write-Host '      "ChatAppConfig": {'
+                    Write-Host '        "discord_webhook_url": "your-webhook-url"'
+                    Write-Host '      }'
+                    Write-Host "   3. Sla het bestand op en herstart dit script."
+                    Write-Host "Druk op een toets om af te sluiten..."
+                    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+                    exit 1
+                }
+            }
+            default {
+                Write-Host "❌ Fout: Ongeldige ChatApp waarde in config.json: $($config.ChatApp)"
+                Write-Host "   Geldige waarden zijn: 'mattermost', 'telegram', 'discord'."
                 Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                Write-Host "   2. Stel de Mattermost parameters in onder ChatAppConfig, bijvoorbeeld:"
-                Write-Host '      "ChatAppConfig": {'
-                Write-Host '        "mattermost_url": "https://mm.your-server.com",'
-                Write-Host '        "mattermost_channel": "your-channel-id",'
-                Write-Host '        "mattermost_token": "your-token"'
-                Write-Host '      }'
+                Write-Host "   2. Stel een geldige ChatApp in, bijvoorbeeld: {`"ChatApp`": `"mattermost`"}"
                 Write-Host "   3. Sla het bestand op en herstart dit script."
                 Write-Host "Druk op een toets om af te sluiten..."
                 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                 exit 1
             }
-        }
-        "telegram" {
-            if (-not $config.ChatAppConfig.telegram_bot_token -or $config.ChatAppConfig.telegram_bot_token -eq "" -or
-                -not $config.ChatAppConfig.telegram_chat_id -or $config.ChatAppConfig.telegram_chat_id -eq "") {
-                Write-Host "❌ Fout: Telegram parameters (telegram_bot_token, telegram_chat_id) zijn niet volledig ingesteld in config.json."
-                Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                Write-Host "   2. Stel de Telegram parameters in onder ChatAppConfig, bijvoorbeeld:"
-                Write-Host '      "ChatAppConfig": {'
-                Write-Host '        "telegram_bot_token": "your-bot-token",'
-                Write-Host '        "telegram_chat_id": "your-chat-id"'
-                Write-Host '      }'
-                Write-Host "   3. Sla het bestand op en herstart dit script."
-                Write-Host "Druk op een toets om af te sluiten..."
-                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-                exit 1
-            }
-        }
-        "discord" {
-            if (-not $config.ChatAppConfig.discord_webhook_url -or $config.ChatAppConfig.discord_webhook_url -eq "") {
-                Write-Host "❌ Fout: Discord parameter (discord_webhook_url) is niet ingesteld in config.json."
-                Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                Write-Host "   2. Stel de Discord parameter in onder ChatAppConfig, bijvoorbeeld:"
-                Write-Host '      "ChatAppConfig": {'
-                Write-Host '        "discord_webhook_url": "your-webhook-url"'
-                Write-Host '      }'
-                Write-Host "   3. Sla het bestand op en herstart dit script."
-                Write-Host "Druk op een toets om af te sluiten..."
-                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-                exit 1
-            }
-        }
-        default {
-            Write-Host "❌ Fout: Ongeldige ChatApp waarde in config.json: $($config.ChatApp)"
-            Write-Host "   Geldige waarden zijn: 'mattermost', 'telegram', 'discord'."
-            Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-            Write-Host "   2. Stel een geldige ChatApp in, bijvoorbeeld: {`"ChatApp`": `"mattermost`"}"
-            Write-Host "   3. Sla het bestand op en herstart dit script."
-            Write-Host "Druk op een toets om af te sluiten..."
-            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-            exit 1
         }
     }
 
@@ -242,7 +250,7 @@ function Get-Config {
     if (-not $config.BacktrackSeconds -or $config.BacktrackSeconds -lt 0 -or $config.BacktrackSeconds -gt 300) {
         Write-Host "❌ Fout: BacktrackSeconds moet een getal zijn tussen 0 en 300 in config.json."
         Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-        Write-Host "   2. Stel een geldige BacktrackSeconds in, bijvoorbeeld: {`"BacktrackSeconds`": 60}"
+        Write-Host "   2. Stel een geldige BacktrackSeconds in, bijvoorbeeld: {`"BacktrackSeconds`": 30}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -252,7 +260,7 @@ function Get-Config {
     if (-not $config.DurationSeconds -or $config.DurationSeconds -lt 1 -or $config.DurationSeconds -gt 300) {
         Write-Host "❌ Fout: DurationSeconds moet een getal zijn tussen 1 en 300 in config.json."
         Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-        Write-Host "   2. Stel een geldige DurationSeconds in, bijvoorbeeld: {`"DurationSeconds`": 60}"
+        Write-Host "   2. Stel een geldige DurationSeconds in, bijvoorbeeld: {`"DurationSeconds`": 30}"
         Write-Host "   3. Sla het bestand op en herstart dit script."
         Write-Host "Druk op een toets om af te sluiten..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
@@ -280,7 +288,7 @@ if ($additionalText) { $apiEndpointBase += "&additional_text=$additionalText" }
 
 switch ($chatApp) {
     "mattermost" {
-        $mattermostUrl = $config.ChatAppConfig.mattermost W
+        $mattermostUrl = $config.ChatAppConfig.mattermost_url
         $mattermostChannel = $config.ChatAppConfig.mattermost_channel
         $mattermostToken = $config.ChatAppConfig.mattermost_token
         $apiEndpoint = "$apiEndpointBase&mattermost_url=$mattermostUrl&mattermost_channel=$mattermostChannel&mattermost_token=$mattermostToken"
@@ -293,6 +301,15 @@ switch ($chatApp) {
     "discord" {
         $discordWebhookUrl = $config.ChatAppConfig.discord_webhook_url
         $apiEndpoint = "$apiEndpointBase&discord_webhook_url=$discordWebhookUrl"
+    }
+    default {
+        # Skip if chatApp is empty during first run
+        if (-not $firstRun) {
+            Write-Host "❌ Fout: Ongeldige ChatApp waarde: $chatApp"
+            Write-Host "Druk op een toets om af te sluiten..."
+            $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            exit 1
+        }
     }
 }
 
@@ -539,5 +556,5 @@ try {
     Write-Host "❌ Onverwachte fout in hoofdloop: $_"
     Write-Host "Druk op een toets om af te sluiten..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    exit
+    exit 1
 }

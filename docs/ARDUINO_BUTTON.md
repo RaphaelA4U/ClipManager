@@ -21,10 +21,11 @@ The button integration uses an Arduino with a push button to trigger clip record
 ## Setup Instructions
 
 ### Step 1: Download and Run the ClipManager Script
-1. Download the ClipManager script from the following link:
-   - [Download ClipManager Script](https://github.com/RaphaelA4U/ClipManager/raw/main/arduino_button/clipmanager.ps1) *(Replace with the actual URL where you host the file)*
-2. Save the file (`clipmanager.ps1`) to your computer (e.g., in your Downloads folder).
-3. Double-click `clipmanager.ps1` to run the script.
+1. Navigate to the ClipManager script in your browser:
+   - [View ClipManager Script](https://github.com/RaphaelA4U/ClipManager/blob/main/arduino_button/clipmanager.ps1)
+2. Click the **Download raw file** button on the top-right of the code view.
+3. Save the file (`clipmanager.ps1`) to your Downloads folder.
+5. Right-click the saved file and select **Run with PowerShell**.
    - **Security Warning**: You may see a Windows security warning (e.g., "Windows protected your PC" or a User Account Control prompt) because the script is downloaded from the internet.
    - **Approve the Warning**:
      - If you see a "Windows protected your PC" message (SmartScreen), click **More info** and then **Run anyway**.
