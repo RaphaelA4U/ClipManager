@@ -527,10 +527,10 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 			lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
 
 			if firstSegmentStart.After(startTime) || lastSegmentEnd.Before(endTime) {
-				cm.log.Warning("neededSegments: ", neededSegments, "firstSegmentStart: ", firstSegmentStart.Format("15:04:05") "lastSegmentEnd: ", lastSegmentEnd.Format("15:04:05"))
-				cm.log.Warning("Not enough segments to cover full range, waiting for more segments...")
-				continue
-			}
+                cm.log.Warning("neededSegments: ", neededSegments, "firstSegmentStart: ", firstSegmentStart.Format("15:04:05"), "lastSegmentEnd: ", lastSegmentEnd.Format("15:04:05"))
+                cm.log.Warning("Not enough segments to cover full range, waiting for more segments...")
+                continue
+            }
 
 			break
 		}
