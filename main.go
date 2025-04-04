@@ -177,11 +177,12 @@ func (cm *ClipManager) HandleClipRequest(w http.ResponseWriter, r *http.Request)
             cm.log.Info("[%s] Total processing time: %v", requestID, processingTime)
         }()
 
-        backtrackSeconds, _ := strconv.Atoi(r.URL.Query().Get("backtrack_seconds"))
-        durationSeconds, _ := strconv.Atoi(r.URL.Query().Get("duration_seconds"))
+		backtrackSeconds, _ := strconv.Atoi(r.URL.Query().Get("backtrack_seconds"))
+		durationSeconds, _ := strconv.Atoi(r.URL.Query().Get("duration_seconds"))
+		category := r.URL.Query().Get("category")
 
-        cm.log.Info("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds",
-            requestID, backtrackSeconds, durationSeconds)
+		cm.log.Info("[%s] Extracting clip for backtrack: %d seconds, duration: %d seconds with category: %s",
+			requestID, backtrackSeconds, durationSeconds, category)
         err := cm.RecordClip(backtrackSeconds, durationSeconds, filePath, startTime)
         if err != nil {
             cm.log.Error("[%s] Recording error: %v", requestID, err)
