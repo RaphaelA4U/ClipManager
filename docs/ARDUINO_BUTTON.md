@@ -29,7 +29,7 @@ The button integration files are located in the `arduino_button/` directory of t
 4. Navigate to the `arduino_button/` folder. You should see:
    ```
    arduino_button/
-   ├── ClipManagerButton.ino
+   ├── arduino_button.ino
    ├── clipmanager.ps1
    ├── clipmanager_run.bat
    ├── config.json
@@ -156,8 +156,8 @@ The PowerShell script (`clipmanager.ps1`) needs to know where the ClipManager se
 The Arduino must be programmed to communicate with the PowerShell script. Follow these steps to upload the code:
 
 #### 3.1 Download the Arduino Code
-1. Open the file `arduino_button/ClipManagerButton.ino` in the Arduino IDE.
-   - Double-click `ClipManagerButton.ino` to open it, or in the Arduino IDE, go to `File > Open` and select the file.
+1. Open the file `arduino_button/arduino_button.ino` in the Arduino IDE.
+   - Double-click `arduino_button.ino` to open it, or in the Arduino IDE, go to `File > Open` and select the file.
 
 #### 3.2 Set the Identifier
 - In the code, you’ll see a line:
@@ -292,7 +292,7 @@ The PowerShell script (`clipmanager.ps1`) listens for button presses and sends r
     - `AdditionalText`: Optional additional description text for the clip message.
   - The script validates all required fields and provides clear error messages if something is missing (visible during manual setup).
   - If the specified `ServerUrl` is not reachable, it attempts to use `http://localhost:5001` as a fallback.
-- **Arduino Code (`ClipManagerButton.ino`)**:
+- **Arduino Code (`arduino_button.ino`)**:
   - Uses a button on pin 12 with `INPUT_PULLUP` to detect presses.
   - Sends "BUTTON_PRESSED" over the serial connection when the button is pressed.
   - Responds to "IDENTIFY" requests with the configured identifier (e.g., `CLIPMANAGER_HYPE`).
