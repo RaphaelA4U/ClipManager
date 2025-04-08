@@ -626,7 +626,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
         cm.log.Info("Released R-Lock after copying %d segments", len(segments))
 
         if len(segments) == 0 {
-            cm.log.Warning("⚠️ No segments available, waiting for first segment...")
+            cm.log.Warning("No segments available, waiting for first segment...")
             select {
             case newSegment := <-cm.segmentChan:
                 cm.log.Info("📼 Received first segment: %s with timestamp %s", 
@@ -742,7 +742,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
         }
     }
 
-    cm.log.Success("✅ Selected %d segments for clip", len(neededSegments))
+    cm.log.Success("Selected %d segments for clip", len(neededSegments))
 
     // Log each selected segment for debugging
     for i, segment := range neededSegments {
@@ -805,7 +805,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 
 	args = append(args, "-c:a", "copy", "-movflags", "+faststart", "-y", outputPath)
 
-	cm.log.Debug("🔧 Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
+	cm.log.Debug("Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
 	cmd = exec.Command("ffmpeg", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -820,7 +820,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		return err
 	}
 
-	cm.log.Success("✅ Successfully extracted clip with duration %.2f seconds", extractedDuration)
+	cm.log.Success("Successfully extracted clip with duration %.2f seconds", extractedDuration)
 
 	fileInfo, err := os.Stat(outputPath)
 	if err != nil {
@@ -834,7 +834,7 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 
 	aspectRatio, err := cm.getVideoAspectRatio(outputPath)
 	if err != nil {
-		cm.log.Warning("⚠️ Warning: Could not determine aspect ratio of clip: %v", err)
+		cm.log.Warning("Warning: Could not determine aspect ratio of clip: %v", err)
 		return nil
 	}
 
@@ -850,23 +850,23 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 		fixedOutputPath,
 	}
 
-	cm.log.Debug("🔧 Fixing aspect ratio with FFmpeg command: ffmpeg %s", strings.Join(fixArgs, " "))
+	cm.log.Debug("Fixing aspect ratio with FFmpeg command: ffmpeg %s", strings.Join(fixArgs, " "))
 	fixCmd := exec.Command("ffmpeg", fixArgs...)
 	var fixStderr bytes.Buffer
 	fixCmd.Stderr = &fixStderr
 	err = fixCmd.Run()
 	if err != nil {
-		cm.log.Warning("⚠️ Warning: Failed to fix aspect ratio: %v\nFFmpeg output: %s", err, fixStderr.String())
+		cm.log.Warning("Warning: Failed to fix aspect ratio: %v\nFFmpeg output: %s", err, fixStderr.String())
 		return nil
 	}
 
 	if err := os.Rename(fixedOutputPath, outputPath); err != nil {
-		cm.log.Warning("⚠️ Warning: Failed to replace original file with fixed aspect ratio file: %v", err)
+		cm.log.Warning("Warning: Failed to replace original file with fixed aspect ratio file: %v", err)
 		os.Remove(fixedOutputPath)
 		return nil
 	}
 
-	cm.log.Success("✅ Aspect ratio fixed for clip: %s", outputPath)
+	cm.log.Success("Aspect ratio fixed for clip: %s", outputPath)
 	return nil
 }
 
@@ -947,7 +947,7 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 	cm.log.Info("📏 Original file size for %s: %.2f MB (limit: %.2f MB)", chatApp, fileSizeMB, targetSizeMB)
 
 	if fileSizeMB <= targetSizeMB {
-		cm.log.Success("✅ File size is under the limit for %s, using original file", chatApp)
+		cm.log.Success("File size is under the limit for %s, using original file", chatApp)
 		return originalFilePath, nil
 	}
 
@@ -959,7 +959,7 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 
 	aspectRatio, err := cm.getVideoAspectRatio(originalFilePath)
 	if err != nil {
-		cm.log.Warning("⚠️ Warning: Could not determine aspect ratio for compression: %v", err)
+		cm.log.Warning("Warning: Could not determine aspect ratio for compression: %v", err)
 		aspectRatio = "16:9"
 	}
 	cm.log.Info("📏 Using aspect ratio for compression: %s", aspectRatio)
@@ -984,19 +984,19 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 			compressedFilePath,
 		}
 
-		cm.log.Debug("🔧 Compression command for %s: ffmpeg %s", chatApp, strings.Join(args, " "))
+		cm.log.Debug("Compression command for %s: ffmpeg %s", chatApp, strings.Join(args, " "))
 		cmd := exec.Command("ffmpeg", args...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		err = cmd.Run()
 		if err != nil {
-			cm.log.Error("❌ Compression failed for %s: %v\nFFmpeg output: %s", chatApp, err, stderr.String())
+			cm.log.Error("Compression failed for %s: %v\nFFmpeg output: %s", chatApp, err, stderr.String())
 			return originalFilePath, fmt.Errorf("compression failed: %v", err)
 		}
 
 		compressedInfo, err := os.Stat(compressedFilePath)
 		if err != nil {
-			cm.log.Error("❌ Error checking compressed file for %s: %v, falling back to original", chatApp, err)
+			cm.log.Error("Error checking compressed file for %s: %v, falling back to original", chatApp, err)
 			return originalFilePath, fmt.Errorf("could not access compressed file: %v", err)
 		}
 
@@ -1004,14 +1004,14 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 		cm.log.Info("📏 Compressed file size for %s: %.2f MB", chatApp, compressedSizeMB)
 
 		if compressedSizeMB <= targetSizeMB {
-			cm.log.Success("✅ Compression succeeded for %s with CRF %d", chatApp, crf)
+			cm.log.Success("Compression succeeded for %s with CRF %d", chatApp, crf)
 			return compressedFilePath, nil
 		}
 
 		crf += crfStep
 	}
 
-	cm.log.Error("❌ Could not compress file under %.2f MB for %s, even with CRF %d", targetSizeMB, chatApp, maxCRF)
+	cm.log.Error("Could not compress file under %.2f MB for %s, even with CRF %d", targetSizeMB, chatApp, maxCRF)
 	return compressedFilePath, fmt.Errorf("file size still exceeds %.2f MB for %s after maximum compression", targetSizeMB, chatApp)
 }
 
