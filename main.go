@@ -487,9 +487,48 @@ func (cm *ClipManager) addSegment(segmentPath string) {
     defer cm.segmentsMutex.Unlock()
 
     absolutePath := filepath.Join(cm.tempDir, segmentPath)
+
+    // Haal de starttijd van het segment uit FFmpeg-metadata
+    cmd := exec.Command("ffprobe",
+        "-v", "error",
+        "-show_entries", "format=start_time",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        absolutePath,
+    )
+    var out bytes.Buffer
+    cmd.Stdout = &out
+    err := cmd.Run()
+    var timestamp time.Time
+    if err == nil {
+        startTimeStr := strings.TrimSpace(out.String())
+        if startTimeStr != "" {
+            startTimeSec, err := strconv.ParseFloat(startTimeStr, 64)
+            if err == nil {
+                // Converteer naar time.Time (Unix-tijd sinds epoch)
+                timestamp = time.Unix(int64(startTimeSec), int64((startTimeSec-float64(int64(startTimeSec)))*1e9))
+                
+                // Als timestamp te ver in het verleden ligt, gebruik time.Now()
+                // Dit kan gebeuren bij bepaalde ffmpeg streams die met tijdcode 0 beginnen
+                if timestamp.Year() < 2000 {
+                    cm.log.Warning("Segment timestamp too old (%s), using adjusted current time instead", timestamp.Format("2006-01-02 15:04:05.000"))
+                    timestamp = time.Now()
+                }
+            } else {
+                cm.log.Warning("Failed to parse start time for %s: %v, using time.Now()", segmentPath, err)
+                timestamp = time.Now()
+            }
+        } else {
+            cm.log.Warning("No start time found for %s, using time.Now()", segmentPath)
+            timestamp = time.Now()
+        }
+    } else {
+        cm.log.Warning("ffprobe failed for %s: %v, using time.Now()", segmentPath, err)
+        timestamp = time.Now()
+    }
+
     segmentInfo := SegmentInfo{
         Path:      absolutePath,
-        Timestamp: time.Now(),
+        Timestamp: timestamp,
     }
     cm.segments = append(cm.segments, segmentInfo)
 
@@ -509,16 +548,16 @@ func (cm *ClipManager) addSegment(segmentPath string) {
         cm.segments = cm.segments[len(cm.segments)-maxSegments:]
     }
 
-    // Use non-blocking send to prevent deadlock
+    // Non-blocking send
     select {
     case cm.segmentChan <- segmentInfo:
-        // Successfully sent to channel
+        // Successfully sent
     default:
-        // Channel is full, log this but don't block
-        cm.log.Warning("segmentChan full, skipping notification (this is normal if no clips requested recently)")
+        cm.log.Warning("segmentChan full, skipping notification (normal if no clips requested recently)")
     }
-    
-    cm.log.Info("Added segment: %s, total: %d (up to %d seconds)", segmentPath, len(cm.segments), len(cm.segments)*cm.segmentDuration)
+
+    cm.log.Info("Added segment: %s with timestamp %s, total: %d (up to %d seconds)",
+        segmentPath, segmentInfo.Timestamp.Format("15:04:05.000"), len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
 func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
@@ -570,110 +609,161 @@ func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
 }
 
 func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputPath string, requestTime time.Time) error {
-	startTime := requestTime.Add(-time.Duration(backtrackSeconds) * time.Second)
-	endTime := startTime.Add(time.Duration(durationSeconds) * time.Second)
+    startTime := requestTime.Add(-time.Duration(backtrackSeconds) * time.Second)
+    endTime := startTime.Add(time.Duration(durationSeconds) * time.Second)
 
-	cm.log.Info("📹 Requested clip from %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
+    cm.log.Info("📹 Requested clip from %s to %s", startTime.Format("15:04:05.000"), endTime.Format("15:04:05.000"))
 
-	var neededSegments []SegmentInfo
-	cm.log.Info("Starting segment selection...")
-	for {
-		cm.log.Info("Starting R-Lock")
-		cm.segmentsMutex.RLock()
-		segments := make([]SegmentInfo, len(cm.segments))
-		cm.log.Info("Starting copy")
-		copy(segments, cm.segments)
-		cm.segmentsMutex.RUnlock()
-		cm.log.Info("Starting R-unlock")
+    var neededSegments []SegmentInfo
+    cm.log.Info("Starting segment selection...")
+    
+    for {
+        cm.log.Info("Acquiring R-Lock for segment selection")
+        cm.segmentsMutex.RLock()
+        segments := make([]SegmentInfo, len(cm.segments))
+        copy(segments, cm.segments)
+        cm.segmentsMutex.RUnlock()
+        cm.log.Info("Released R-Lock after copying %d segments", len(segments))
 
-		if len(segments) == 0 {
-			cm.log.Warning("⚠️ No segments available, waiting for first segment...")
-			select {
-			case newSegment := <-cm.segmentChan:
-				cm.log.Info("📼 Received first segment: %s", newSegment.Path)
-				continue
-			case <-time.After(30 * time.Second):
-				return fmt.Errorf("timeout waiting for first segment")
-			}
-		}
+        if len(segments) == 0 {
+            cm.log.Warning("⚠️ No segments available, waiting for first segment...")
+            select {
+            case newSegment := <-cm.segmentChan:
+                cm.log.Info("📼 Received first segment: %s with timestamp %s", 
+                    filepath.Base(newSegment.Path), newSegment.Timestamp.Format("15:04:05.000"))
+                continue
+            case <-time.After(30 * time.Second):
+                return fmt.Errorf("timeout waiting for first segment")
+            }
+        }
 
-		neededSegments = []SegmentInfo{}
-		earliestTime := segments[0].Timestamp
-		latestTime := segments[len(segments)-1].Timestamp
+        neededSegments = []SegmentInfo{}
+        earliestTime := segments[0].Timestamp
+        latestTime := segments[len(segments)-1].Timestamp
+        latestSegmentEnd := latestTime.Add(time.Duration(cm.segmentDuration) * time.Second)
 
-		if startTime.Before(earliestTime) {
-			cm.log.Warning("⚠️ Requested start time %s is before earliest segment at %s", startTime.Format("15:04:05"), earliestTime.Format("15:04:05"))
-			startTime = earliestTime
-			endTime = startTime.Add(time.Duration(durationSeconds) * time.Second)
-			cm.log.Info("🔄 Adjusted clip time to %s to %s", startTime.Format("15:04:05"), endTime.Format("15:04:05"))
-		}
+        cm.log.Info("Segment range: %s to %s (end: %s)", 
+            earliestTime.Format("15:04:05.000"), 
+            latestTime.Format("15:04:05.000"),
+            latestSegmentEnd.Format("15:04:05.000"))
 
-		if endTime.After(latestTime) {
-			cm.log.Info("⏳ End time %s is after latest segment at %s, waiting for more segments...", endTime.Format("15:04:05"), latestTime.Format("15:04:05"))
-			timeout := time.After(2 * time.Duration(durationSeconds) * time.Second)
-			select {
-			case newSegment := <-cm.segmentChan:
-				cm.log.Info("📼 Received new segment: %s at %s", newSegment.Path, newSegment.Timestamp.Format("15:04:05"))
-				continue
-			case <-timeout:
-				return fmt.Errorf("timeout waiting for segments to cover end time %s", endTime.Format("15:04:05"))
-			}
-		}
+        if startTime.Before(earliestTime) {
+            cm.log.Warning("⚠️ Requested start time %s is before earliest segment at %s", 
+                startTime.Format("15:04:05.000"), earliestTime.Format("15:04:05.000"))
+            startTime = earliestTime
+            endTime = startTime.Add(time.Duration(durationSeconds) * time.Second)
+            cm.log.Info("🔄 Adjusted clip time to %s to %s", startTime.Format("15:04:05.000"), endTime.Format("15:04:05.000"))
+        }
 
-		for _, segment := range segments {
-			segmentStart := segment.Timestamp
-			segmentEnd := segmentStart.Add(time.Duration(cm.segmentDuration) * time.Second)
+        // Check if we need to wait for more segments to cover the end time
+        if endTime.After(latestSegmentEnd) {
+            cm.log.Info("⏳ End time %s is after latest segment end at %s, waiting for more segments...", 
+                endTime.Format("15:04:05.000"), latestSegmentEnd.Format("15:04:05.000"))
+                
+            timeout := time.After(2 * time.Duration(durationSeconds) * time.Second)
+            select {
+            case newSegment := <-cm.segmentChan:
+                cm.log.Info("📼 Received new segment: %s at %s", 
+                    filepath.Base(newSegment.Path), newSegment.Timestamp.Format("15:04:05.000"))
+                continue
+            case <-timeout:
+                cm.log.Warning("Timeout waiting for segments to cover end time. Using what we have so far.")
+                // Instead of failing, try to use what we have (if we're close enough)
+                if latestSegmentEnd.After(endTime.Add(-time.Duration(cm.segmentDuration) * time.Second)) {
+                    cm.log.Info("Latest segment end is close enough to requested end time, continuing...")
+                    // Continue with the segments we have
+                } else {
+                    return fmt.Errorf("timeout waiting for segments to cover end time %s, last segment ends at %s", 
+                        endTime.Format("15:04:05.000"), latestSegmentEnd.Format("15:04:05.000"))
+                }
+            }
+        }
 
-			if segmentEnd.After(startTime) && segmentStart.Before(endTime) {
-				neededSegments = append(neededSegments, segment)
-			}
-		}
+        // Collect all segments that overlap with our requested time range
+        cm.log.Info("Searching for segments between %s and %s", startTime.Format("15:04:05.000"), endTime.Format("15:04:05.000"))
+        for i, segment := range segments {
+            segmentStart := segment.Timestamp
+            segmentEnd := segmentStart.Add(time.Duration(cm.segmentDuration) * time.Second)
+            
+            // Check if this segment overlaps with our target range
+            if segmentEnd.After(startTime) && segmentStart.Before(endTime) {
+                neededSegments = append(neededSegments, segment)
+                cm.log.Debug("Selected segment %d: %s (%s to %s)", i, 
+                    filepath.Base(segment.Path), 
+                    segmentStart.Format("15:04:05.000"), 
+                    segmentEnd.Format("15:04:05.000"))
+            }
+        }
 
-		if len(neededSegments) > 0 {
-			sort.Slice(neededSegments, func(i, j int) bool {
-				return neededSegments[i].Timestamp.Before(neededSegments[j].Timestamp)
-			})
+        if len(neededSegments) > 0 {
+            // Sort by timestamp to ensure proper ordering
+            sort.Slice(neededSegments, func(i, j int) bool {
+                return neededSegments[i].Timestamp.Before(neededSegments[j].Timestamp)
+            })
 
-			firstSegmentStart := neededSegments[0].Timestamp
-			lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
+            firstSegmentStart := neededSegments[0].Timestamp
+            lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
 
-			if firstSegmentStart.After(startTime) || lastSegmentEnd.Before(endTime) {
-                cm.log.Warning("neededSegments: ", neededSegments, "firstSegmentStart: ", firstSegmentStart.Format("15:04:05"), "lastSegmentEnd: ", lastSegmentEnd.Format("15:04:05"))
-                cm.log.Warning("Not enough segments to cover full range, waiting for more segments...")
+            cm.log.Info("Selected %d segments, range: %s to %s", 
+                len(neededSegments), 
+                firstSegmentStart.Format("15:04:05.000"), 
+                lastSegmentEnd.Format("15:04:05.000"))
+
+            // Accept segments with a small margin for the start and end time
+            // Half a segment duration margin for flexibility
+            marginDuration := time.Duration(cm.segmentDuration/2) * time.Second
+            
+            if firstSegmentStart.After(startTime.Add(marginDuration)) {
+                cm.log.Warning("First segment starts at %s, which is too late (requested start: %s, margin: %v)",
+                    firstSegmentStart.Format("15:04:05.000"), startTime.Format("15:04:05.000"), marginDuration)
+                cm.log.Warning("Waiting for more segments to cover the beginning...")
+                continue
+            }
+            
+            if lastSegmentEnd.Before(endTime.Add(-marginDuration)) {
+                cm.log.Warning("Last segment ends at %s, which is too early (requested end: %s, margin: %v)",
+                    lastSegmentEnd.Format("15:04:05.000"), endTime.Format("15:04:05.000"), marginDuration)
+                cm.log.Warning("Waiting for more segments to cover the end...")
                 continue
             }
 
-			break
-		}
+            // We have sufficient segments with acceptable margins
+            break
+        }
 
-		cm.log.Warning("No overlapping segments found, waiting for more segments...")
-		select {
-		case newSegment := <-cm.segmentChan:
-			cm.log.Info("📼 Received new segment: %s", newSegment.Path)
-			continue
-		case <-time.After(30 * time.Second):
-			return fmt.Errorf("timeout waiting for overlapping segments")
-		}
-	}
+        cm.log.Warning("No overlapping segments found, waiting for more segments...")
+        select {
+        case newSegment := <-cm.segmentChan:
+            cm.log.Info("📼 Received new segment: %s at %s", 
+                filepath.Base(newSegment.Path), newSegment.Timestamp.Format("15:04:05.000"))
+            continue
+        case <-time.After(30 * time.Second):
+            return fmt.Errorf("timeout waiting for overlapping segments")
+        }
+    }
 
-	cm.log.Success("✅ Selected %d segments for clip", len(neededSegments))
+    cm.log.Success("✅ Selected %d segments for clip", len(neededSegments))
 
-	concatListPath := filepath.Join(cm.tempDir, "concat_list.txt")
-	concatFile, err := os.Create(concatListPath)
-	if err != nil {
-		return fmt.Errorf("failed to create concat list: %v", err)
-	}
-	defer os.Remove(concatListPath)
+    // Log each selected segment for debugging
+    for i, segment := range neededSegments {
+        cm.log.Debug("Segment %d: %s (timestamp: %s)", i, 
+            filepath.Base(segment.Path), segment.Timestamp.Format("15:04:05.000"))
+    }
 
-	for _, segment := range neededSegments {
-		filename := filepath.Base(segment.Path)
-		fmt.Fprintf(concatFile, "file '%s'\n", filename)
-	}
-	concatFile.Close()
+    concatListPath := filepath.Join(cm.tempDir, "concat_list.txt")
+    concatFile, err := os.Create(concatListPath)
+    if err != nil {
+        return fmt.Errorf("failed to create concat list: %v", err)
+    }
+    defer os.Remove(concatListPath)
 
-	cm.log.Info("📝 Created concat list at %s with %d segments", concatListPath, len(neededSegments))
+    for _, segment := range neededSegments {
+        filename := filepath.Base(segment.Path)
+        fmt.Fprintf(concatFile, "file '%s'\n", filename)
+    }
+    concatFile.Close()
 
-	firstSegmentStart := neededSegments[0].Timestamp
+    firstSegmentStart := neededSegments[0].Timestamp
 	startOffset := startTime.Sub(firstSegmentStart).Seconds()
 	if startOffset < 0 {
 		startOffset = 0
