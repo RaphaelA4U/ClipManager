@@ -257,114 +257,217 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 	return nil
 }
 
+// hasAudioStream checks if the RTSP stream contains an audio stream
+func (cm *ClipManager) hasAudioStream(rtspURL string) (bool, error) {
+    cmd := exec.Command("ffprobe",
+        "-rtsp_transport", "tcp",
+        "-i", rtspURL,
+        "-show_streams",
+        "-select_streams", "a", // Select only audio streams
+        "-print_format", "json",
+        "-v", "error",
+    )
+
+    var out bytes.Buffer
+    cmd.Stdout = &out
+    cmd.Stderr = &out // Capture errors as well
+
+    err := cmd.Run()
+    if err != nil {
+        cm.log.Error("ffprobe failed: %v\nOutput: %s", err, out.String())
+        return false, err
+    }
+
+    var result struct {
+        Streams []interface{} `json:"streams"`
+    }
+    if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+        cm.log.Error("Failed to parse ffprobe output: %v", err)
+        return false, err
+    }
+
+    return len(result.Streams) > 0, nil
+}
+
+// hasVideoStream checks if the RTSP stream contains a video stream
+func (cm *ClipManager) hasVideoStream(rtspURL string) (bool, error) {
+    cmd := exec.Command("ffprobe",
+        "-rtsp_transport", "tcp",
+        "-i", rtspURL,
+        "-show_streams",
+        "-select_streams", "v", // Select only video streams
+        "-print_format", "json",
+        "-v", "error",
+    )
+
+    var out bytes.Buffer
+    cmd.Stdout = &out
+    cmd.Stderr = &out // Capture errors as well
+
+    err := cmd.Run()
+    if err != nil {
+        cm.log.Error("ffprobe failed to detect video: %v\nOutput: %s", err, out.String())
+        return false, err
+    }
+
+    var result struct {
+        Streams []interface{} `json:"streams"`
+    }
+    if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+        cm.log.Error("Failed to parse ffprobe output for video detection: %v", err)
+        return false, err
+    }
+
+    return len(result.Streams) > 0, nil
+}
+
 func (cm *ClipManager) StartBackgroundRecording() {
-	if cm.recording {
-		cm.log.Warning("Background recording is already running")
-		return
-	}
+    if cm.recording {
+        cm.log.Warning("Background recording is already running")
+        return
+    }
 
-	cm.recording = true
+    cm.recording = true
 
-	cm.log.Info("Starting background recording with segments for backtracking capability...")
+    cm.log.Info("Starting background recording with segments for backtracking capability...")
 
-	go func() {
-		attempt := 1
-		cycle := 0
+    // Check if the stream has audio and video
+    hasAudio, audioErr := cm.hasAudioStream(cm.cameraIP)
+    hasVideo, videoErr := cm.hasVideoStream(cm.cameraIP)
+    
+    // Handle detection errors
+    if audioErr != nil {
+        cm.log.Warning("Could not determine if stream has audio, assuming no audio: %v", audioErr)
+        hasAudio = false
+    }
+    
+    if videoErr != nil {
+        cm.log.Warning("Could not determine if stream has video, assuming no video: %v", videoErr)
+        hasVideo = false
+    }
+    
+    // Log the stream characteristics
+    if hasAudio && hasVideo {
+        cm.log.Info("Both audio and video detected in stream")
+    } else if hasAudio {
+        cm.log.Info("Audio-only stream detected (no video)")
+    } else if hasVideo {
+        cm.log.Info("Video-only stream detected (no audio)")
+    } else {
+        cm.log.Warning("Neither audio nor video detected in stream. Recording might not work correctly.")
+    }
 
-		for {
-			availableSpace, err := cm.CheckDiskSpace()
-			if err != nil {
-				cm.log.Error("Error checking disk space: %v, continuing with recording", err)
-			} else {
-				availableSpaceMB := availableSpace / (1024 * 1024)
-				cm.log.Info("Available disk space: %d MB", availableSpaceMB)
+    go func() {
+        attempt := 1
+        cycle := 0
 
-				if availableSpaceMB < 500 {
-					cm.log.Warning("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
-					time.Sleep(30 * time.Second)
-					continue
-				}
-			}
+        for {
+            availableSpace, err := cm.CheckDiskSpace()
+            if err != nil {
+                cm.log.Error("Error checking disk space: %v, continuing with recording", err)
+            } else {
+                availableSpaceMB := availableSpace / (1024 * 1024)
+                cm.log.Info("Available disk space: %d MB", availableSpaceMB)
 
-			segmentPattern := fmt.Sprintf("%s_cycle%d_%%03d.ts", strings.TrimSuffix(cm.segmentPattern, "_%03d.ts"), cycle)
-			segmentList := filepath.Join(cm.tempDir, fmt.Sprintf("segments_cycle%d.m3u8", cycle))
+                if availableSpaceMB < 500 {
+                    cm.log.Warning("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
+                    time.Sleep(30 * time.Second)
+                    continue
+                }
+            }
 
-			args := []string{
-				"-rtsp_transport", "tcp",
-				"-i", cm.cameraIP,
-				"-f", "segment",
-				"-segment_time", "5",
-				"-segment_format", "mpegts",
-				"-reset_timestamps", "1",
-				"-segment_list", segmentList,
-				"-segment_list_type", "m3u8",
-				"-c:v", "copy",
-				"-c:a", "copy",
-				"-y",
-				segmentPattern,
-			}
+            segmentPattern := fmt.Sprintf("%s_cycle%d_%%03d.ts", strings.TrimSuffix(cm.segmentPattern, "_%03d.ts"), cycle)
+            segmentList := filepath.Join(cm.tempDir, fmt.Sprintf("segments_cycle%d.m3u8", cycle))
 
-			logCmd := fmt.Sprintf("ffmpeg %s", strings.Join(args, " "))
-			cm.log.Debug("Segment recording FFmpeg command: %s", logCmd)
+            args := []string{
+                "-rtsp_transport", "tcp",
+                "-i", cm.cameraIP,
+                "-f", "segment",
+                "-segment_time", "5",
+                "-segment_format", "mpegts",
+                "-reset_timestamps", "1",
+                "-segment_list", segmentList,
+                "-segment_list_type", "m3u8",
+            }
 
-			cmd := exec.Command("ffmpeg", args...)
+            // Add video options based on detection
+            if hasVideo {
+                args = append(args, "-c:v", "copy")
+            } else if hasAudio {
+                // For audio-only stream: create a blank video with the audio
+                args = append(args, "-f", "lavfi", "-i", "color=c=black:s=640x480:r=25")
+            }
 
-			stderr, err := cmd.StderrPipe()
-			if err != nil {
-				cm.log.Error("Error getting stderr pipe: %v", err)
-				time.Sleep(5 * time.Second)
-				continue
-			}
+            // Add audio options based on detection
+            if hasAudio {
+                args = append(args, "-c:a", "copy")
+            } else {
+                args = append(args, "-an")
+            }
 
-			if err := cmd.Start(); err != nil {
-				cm.log.Error("Error starting FFmpeg: %v", err)
-				time.Sleep(5 * time.Second)
-				continue
-			}
+            args = append(args, "-y", segmentPattern)
 
-			go func(cycle int) {
-				scanner := bufio.NewScanner(stderr)
-				segmentRegex := regexp.MustCompile(fmt.Sprintf(`Opening '.*/(segment_cycle%d_\d+\.ts)' for writing`, cycle))
+            logCmd := fmt.Sprintf("ffmpeg %s", strings.Join(args, " "))
+            cm.log.Debug("Segment recording FFmpeg command: %s", logCmd)
 
-				for scanner.Scan() {
-					line := scanner.Text()
-					matches := segmentRegex.FindStringSubmatch(line)
-					if len(matches) > 1 {
-						segmentFile := matches[1]
-						cm.log.Success("New segment created: %s", segmentFile)
-						cm.addSegment(segmentFile)
-					}
-				}
+            cmd := exec.Command("ffmpeg", args...)
 
-				if err := scanner.Err(); err != nil {
-					cm.log.Error("Error reading FFmpeg stderr: %v", err)
-				}
-			}(cycle)
+            stderr, err := cmd.StderrPipe()
+            if err != nil {
+                cm.log.Error("Error getting stderr pipe: %v", err)
+                time.Sleep(5 * time.Second)
+                continue
+            }
 
-			err = cmd.Wait()
+            if err := cmd.Start(); err != nil {
+                cm.log.Error("Error starting FFmpeg: %v", err)
+                time.Sleep(5 * time.Second)
+                continue
+            }
 
-			if err != nil {
-				stderrBytes, _ := io.ReadAll(stderr)
-				errMsg := string(stderrBytes)
-				cm.log.Error("FFmpeg error: %v\nFFmpeg output: %s", err, errMsg)
-				if isConnectionError(errMsg) {
-					cm.log.Warning("Camera disconnected, retrying connection (attempt %d)...", attempt)
-					attempt++
-					time.Sleep(10 * time.Second)
-					continue
-				}
+            go func(cycle int) {
+                scanner := bufio.NewScanner(stderr)
+                segmentRegex := regexp.MustCompile(fmt.Sprintf(`Opening '.*/(segment_cycle%d_\d+\.ts)' for writing`, cycle))
 
-				cm.log.Error("Background recording error: %v", err)
-				time.Sleep(5 * time.Second)
-				attempt++
-				continue
-			}
+                for scanner.Scan() {
+                    line := scanner.Text()
+                    matches := segmentRegex.FindStringSubmatch(line)
+                    if len(matches) > 1 {
+                        segmentFile := matches[1]
+                        cm.log.Success("New segment created: %s", segmentFile)
+                        cm.addSegment(segmentFile)
+                    }
+                }
 
-			cm.log.Info("Background recording cycle completed, starting next cycle...")
-			attempt = 1
-			cycle++
-		}
-	}()
+                if err := scanner.Err(); err != nil {
+                    cm.log.Error("Error reading FFmpeg stderr: %v", err)
+                }
+            }(cycle)
+
+            err = cmd.Wait()
+            
+            if err != nil {
+                stderrBytes, _ := io.ReadAll(stderr)
+                errMsg := string(stderrBytes)
+                cm.log.Error("FFmpeg error: %v\nFFmpeg output: %s", err, errMsg)
+                if isConnectionError(errMsg) {
+                    cm.log.Warning("Camera disconnected, retrying connection (attempt %d)...", attempt)
+                    attempt++
+                    time.Sleep(10 * time.Second)
+                    continue
+                }
+
+                cm.log.Error("Background recording error: %v", err)
+                time.Sleep(5 * time.Second)
+                attempt++
+                continue
+            }
+
+            cm.log.Info("Background recording cycle completed, starting next cycle...")
+            attempt = 1
+            cycle++
+        }
+    }()
 }
 
 func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
@@ -380,34 +483,42 @@ func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
 }
 
 func (cm *ClipManager) addSegment(segmentPath string) {
-	cm.segmentsMutex.Lock()
-	defer cm.segmentsMutex.Unlock()
+    cm.segmentsMutex.Lock()
+    defer cm.segmentsMutex.Unlock()
 
-	absolutePath := filepath.Join(cm.tempDir, segmentPath)
-	segmentInfo := SegmentInfo{
-		Path:      absolutePath,
-		Timestamp: time.Now(),
-	}
-	cm.segments = append(cm.segments, segmentInfo)
+    absolutePath := filepath.Join(cm.tempDir, segmentPath)
+    segmentInfo := SegmentInfo{
+        Path:      absolutePath,
+        Timestamp: time.Now(),
+    }
+    cm.segments = append(cm.segments, segmentInfo)
 
-	sort.Slice(cm.segments, func(i, j int) bool {
-		return cm.segments[i].Timestamp.Before(cm.segments[j].Timestamp)
-	})
+    sort.Slice(cm.segments, func(i, j int) bool {
+        return cm.segments[i].Timestamp.Before(cm.segments[j].Timestamp)
+    })
 
-	const maxSegments = 62
-	if len(cm.segments) > maxSegments {
-		for _, old := range cm.segments[:len(cm.segments)-maxSegments] {
-			if err := os.Remove(old.Path); err != nil {
-				cm.log.Error("Failed to remove old segment %s: %v", old.Path, err)
-			} else {
-				cm.log.Info("Removed old segment: %s", old.Path)
-			}
-		}
-		cm.segments = cm.segments[len(cm.segments)-maxSegments:]
-	}
+    const maxSegments = 62
+    if len(cm.segments) > maxSegments {
+        for _, old := range cm.segments[:len(cm.segments)-maxSegments] {
+            if err := os.Remove(old.Path); err != nil {
+                cm.log.Error("Failed to remove old segment %s: %v", old.Path, err)
+            } else {
+                cm.log.Info("Removed old segment: %s", old.Path)
+            }
+        }
+        cm.segments = cm.segments[len(cm.segments)-maxSegments:]
+    }
 
-	cm.segmentChan <- segmentInfo
-	cm.log.Info("Added segment: %s, total: %d (up to %d seconds)", segmentPath, len(cm.segments), len(cm.segments)*cm.segmentDuration)
+    // Use non-blocking send to prevent deadlock
+    select {
+    case cm.segmentChan <- segmentInfo:
+        // Successfully sent to channel
+    default:
+        // Channel is full, log this but don't block
+        cm.log.Warning("segmentChan full, skipping notification (this is normal if no clips requested recently)")
+    }
+    
+    cm.log.Info("Added segment: %s, total: %d (up to %d seconds)", segmentPath, len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
 func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
@@ -570,21 +681,42 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
 
 	totalDuration := endTime.Sub(startTime).Seconds()
 
+	// Check if input has video before extracting
+	hasVideo := true
+	videoCheckPath := neededSegments[0].Path
+	cmd := exec.Command("ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height",
+		"-of", "json",
+		videoCheckPath)
+
+	var probeOut bytes.Buffer
+	cmd.Stdout = &probeOut
+	if err := cmd.Run(); err != nil || probeOut.String() == "{\"streams\":[]}\n" {
+		cm.log.Warning("No video stream found in segments, this appears to be an audio-only clip")
+		hasVideo = false
+	}
+
 	args := []string{
 		"-f", "concat",
 		"-safe", "0",
 		"-i", concatListPath,
 		"-ss", fmt.Sprintf("%.3f", startOffset),
 		"-t", fmt.Sprintf("%.3f", totalDuration),
-		"-c:v", "copy",
-		"-c:a", "copy",
-		"-movflags", "+faststart",
-		"-y",
-		outputPath,
 	}
 
+	if hasVideo {
+		args = append(args, "-c:v", "copy")
+	} else {
+		// For audio-only, create a black video
+		args = append(args, "-f", "lavfi", "-i", "color=c=black:s=640x480:r=25:d="+fmt.Sprintf("%.3f", totalDuration))
+	}
+
+	args = append(args, "-c:a", "copy", "-movflags", "+faststart", "-y", outputPath)
+
 	cm.log.Debug("🔧 Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
-	cmd := exec.Command("ffmpeg", args...)
+	cmd = exec.Command("ffmpeg", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err = cmd.Run()
@@ -823,7 +955,7 @@ func (cm *ClipManager) RetryOperation(operation func() error, serviceName string
 func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, r *http.Request) error {
     operation := func() error {
         file, err := os.Open(filePath)
-        if err != nil {
+        if (err != nil) {
             return fmt.Errorf("could not open file for sending to Telegram: %v", err)
         }
         defer file.Close()
@@ -1197,8 +1329,8 @@ func (cm *ClipManager) serveWebInterface(w http.ResponseWriter, r *http.Request)
 		if err == nil {
 			execDir := filepath.Dir(execPath)
 			templatePath = filepath.Join(execDir, "templates/index.html")
+			}
 		}
-	}
 
 	htmlContent, err := os.ReadFile(templatePath)
 	if err != nil {
