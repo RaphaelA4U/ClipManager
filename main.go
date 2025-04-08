@@ -121,28 +121,52 @@ type ClipManager struct {
 }
 
 func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipManager, error) {
-	if err := os.MkdirAll(tempDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create temp directory %s: %v", tempDir, err)
-	}
-	absTemp, err := filepath.Abs(tempDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve absolute path for %s: %v", tempDir, err)
-	}
-	segmentPattern := filepath.Join(absTemp, "segment_%03d.ts")
+    if err := os.MkdirAll(tempDir, 0755); err != nil {
+        return nil, fmt.Errorf("failed to create temp directory %s: %v", tempDir, err)
+    }
+    absTemp, err := filepath.Abs(tempDir)
+    if err != nil {
+        return nil, fmt.Errorf("failed to resolve absolute path for %s: %v", tempDir, err)
+    }
+    segmentPattern := filepath.Join(absTemp, "segment_%03d.ts")
 
-	return &ClipManager{
-		tempDir:         absTemp,
-		httpClient:      &http.Client{Timeout: 60 * time.Second},
-		limiter:         rate.NewLimiter(rate.Limit(1), 1),
-		hostPort:        hostPort,
-		maxRetries:      3,
-		retryDelay:      5 * time.Second,
-		cameraIP:        cameraIP,
-		segmentPattern:  segmentPattern,
-		segmentChan:     make(chan SegmentInfo, 100),
-		segmentDuration: 5,
-		log:             NewLogger(),
-	}, nil
+    cm := &ClipManager{
+        tempDir:         absTemp,
+        httpClient:      &http.Client{Timeout: 60 * time.Second},
+        limiter:         rate.NewLimiter(rate.Limit(1), 1),
+        hostPort:        hostPort,
+        maxRetries:      3,
+        retryDelay:      5 * time.Second,
+        cameraIP:        cameraIP,
+        segmentPattern:  segmentPattern,
+        segmentChan:     make(chan SegmentInfo, 200), // Increased buffer size provides more headroom
+        segmentDuration: 5,
+        log:             NewLogger(),
+    }
+    
+    // Start a background goroutine to manage the channel
+    go cm.manageSegmentChannel()
+    
+    return cm, nil
+}
+
+// New method to manage the segment channel
+func (cm *ClipManager) manageSegmentChannel() {
+    for {
+        // Sleep briefly to avoid busy waiting
+        time.Sleep(100 * time.Millisecond)
+        
+        // If the channel is getting full (more than 80% capacity), remove oldest items
+        if len(cm.segmentChan) > 80 {
+            // Read and discard the oldest item(s)
+            select {
+            case <-cm.segmentChan:
+                cm.log.Debug("Removed oldest segment notification from channel to prevent overflow")
+            default:
+                // Channel not full anymore
+            }
+        }
+    }
 }
 
 func (cm *ClipManager) RateLimit(next http.HandlerFunc) http.HandlerFunc {
@@ -520,10 +544,26 @@ func (cm *ClipManager) addSegment(segmentPath string, creationTime time.Time) {
         cm.segments = cm.segments[len(cm.segments)-maxSegments:]
     }
 
+    // Modified to ensure the channel never blocks - if full, make room by removing old items
     select {
     case cm.segmentChan <- segmentInfo:
+        // Successfully sent
     default:
-        cm.log.Warning("segmentChan full, skipping notification (normal if no clips requested recently)")
+        // Channel full, remove oldest item and then send
+        select {
+        case <-cm.segmentChan:
+            cm.log.Debug("Removed oldest segment notification to make room for new one")
+        default:
+            // This shouldn't happen if the buffer is >0, but just in case
+        }
+        // Now try to send again
+        select {
+        case cm.segmentChan <- segmentInfo:
+            cm.log.Debug("Sent notification after making room")
+        default:
+            // This really shouldn't happen, but log it if it does
+            cm.log.Warning("Failed to send segment notification even after making room")
+        }
     }
 
     cm.log.Info("Added segment: %s (seg %d) with timestamp %s, total: %d (up to %d seconds)",
