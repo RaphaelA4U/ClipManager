@@ -103,20 +103,21 @@ type SegmentInfo struct {
 }
 
 type ClipManager struct {
-	tempDir         string
-	httpClient      *http.Client
-	limiter         *rate.Limiter
-	hostPort        string
-	maxRetries      int
-	retryDelay      time.Duration
-	cameraIP        string
-	segmentPattern  string
-	recording       bool
-	segments        []SegmentInfo
-	segmentsMutex   sync.RWMutex
-	segmentChan     chan SegmentInfo
-	segmentDuration int
-	log             *Logger 
+	tempDir           string
+	httpClient        *http.Client
+	limiter           *rate.Limiter
+	hostPort          string
+	maxRetries        int
+	retryDelay        time.Duration
+	cameraIP          string
+	segmentPattern    string
+	recording         bool
+	segments          []SegmentInfo
+	segmentsMutex     sync.RWMutex
+	segmentChan       chan SegmentInfo
+	segmentDuration   int
+	recordingStartTime time.Time // New field to track recording start time
+	log               *Logger 
 }
 
 func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipManager, error) {
@@ -328,25 +329,23 @@ func (cm *ClipManager) StartBackgroundRecording() {
     }
 
     cm.recording = true
-
-    cm.log.Info("Starting background recording with segments for backtracking capability...")
+    cm.recordingStartTime = time.Now()
+    cm.log.Info("Starting background recording with segments for backtracking capability at %s...", 
+        cm.recordingStartTime.Format("15:04:05"))
 
     // Check if the stream has audio and video
     hasAudio, audioErr := cm.hasAudioStream(cm.cameraIP)
     hasVideo, videoErr := cm.hasVideoStream(cm.cameraIP)
     
-    // Handle detection errors
     if audioErr != nil {
         cm.log.Warning("Could not determine if stream has audio, assuming no audio: %v", audioErr)
         hasAudio = false
     }
-    
     if videoErr != nil {
         cm.log.Warning("Could not determine if stream has video, assuming no video: %v", videoErr)
         hasVideo = false
     }
     
-    // Log the stream characteristics
     if hasAudio && hasVideo {
         cm.log.Info("Both audio and video detected in stream")
     } else if hasAudio {
@@ -368,7 +367,6 @@ func (cm *ClipManager) StartBackgroundRecording() {
             } else {
                 availableSpaceMB := availableSpace / (1024 * 1024)
                 cm.log.Info("Available disk space: %d MB", availableSpaceMB)
-
                 if availableSpaceMB < 500 {
                     cm.log.Warning("Low disk space (< 500MB), skipping recording cycle, retrying in 30 seconds...")
                     time.Sleep(30 * time.Second)
@@ -390,15 +388,11 @@ func (cm *ClipManager) StartBackgroundRecording() {
                 "-segment_list_type", "m3u8",
             }
 
-            // Add video options based on detection
             if hasVideo {
                 args = append(args, "-c:v", "copy")
             } else if hasAudio {
-                // For audio-only stream: create a blank video with the audio
                 args = append(args, "-f", "lavfi", "-i", "color=c=black:s=640x480:r=25")
             }
-
-            // Add audio options based on detection
             if hasAudio {
                 args = append(args, "-c:a", "copy")
             } else {
@@ -411,7 +405,6 @@ func (cm *ClipManager) StartBackgroundRecording() {
             cm.log.Debug("Segment recording FFmpeg command: %s", logCmd)
 
             cmd := exec.Command("ffmpeg", args...)
-
             stderr, err := cmd.StderrPipe()
             if err != nil {
                 cm.log.Error("Error getting stderr pipe: %v", err)
@@ -434,18 +427,17 @@ func (cm *ClipManager) StartBackgroundRecording() {
                     matches := segmentRegex.FindStringSubmatch(line)
                     if len(matches) > 1 {
                         segmentFile := matches[1]
-                        cm.log.Success("New segment created: %s", segmentFile)
-                        cm.addSegment(segmentFile)
+                        creationTime := time.Now() // Tijd waarop FFmpeg het segment aanmaakt
+                        cm.log.Success("New segment created: %s at %s", segmentFile, creationTime.Format("15:04:05"))
+                        cm.addSegment(segmentFile, creationTime)
                     }
                 }
-
                 if err := scanner.Err(); err != nil {
                     cm.log.Error("Error reading FFmpeg stderr: %v", err)
                 }
             }(cycle)
 
             err = cmd.Wait()
-            
             if err != nil {
                 stderrBytes, _ := io.ReadAll(stderr)
                 errMsg := string(stderrBytes)
@@ -456,7 +448,6 @@ func (cm *ClipManager) StartBackgroundRecording() {
                     time.Sleep(10 * time.Second)
                     continue
                 }
-
                 cm.log.Error("Background recording error: %v", err)
                 time.Sleep(5 * time.Second)
                 attempt++
@@ -482,49 +473,30 @@ func (cm *ClipManager) CheckDiskSpace() (uint64, error) {
 	return availableSpace, nil
 }
 
-func (cm *ClipManager) addSegment(segmentPath string) {
+func (cm *ClipManager) addSegment(segmentPath string, creationTime time.Time) {
     cm.segmentsMutex.Lock()
     defer cm.segmentsMutex.Unlock()
 
     absolutePath := filepath.Join(cm.tempDir, segmentPath)
 
-    // Haal de starttijd van het segment uit FFmpeg-metadata
-    cmd := exec.Command("ffprobe",
-        "-v", "error",
-        "-show_entries", "format=start_time",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        absolutePath,
-    )
-    var out bytes.Buffer
-    cmd.Stdout = &out
-    err := cmd.Run()
-    var timestamp time.Time
-    if err == nil {
-        startTimeStr := strings.TrimSpace(out.String())
-        if startTimeStr != "" {
-            startTimeSec, err := strconv.ParseFloat(startTimeStr, 64)
-            if err == nil {
-                // Converteer naar time.Time (Unix-tijd sinds epoch)
-                timestamp = time.Unix(int64(startTimeSec), int64((startTimeSec-float64(int64(startTimeSec)))*1e9))
-                
-                // Als timestamp te ver in het verleden ligt, gebruik time.Now()
-                // Dit kan gebeuren bij bepaalde ffmpeg streams die met tijdcode 0 beginnen
-                if timestamp.Year() < 2000 {
-                    cm.log.Warning("Segment timestamp too old (%s), using adjusted current time instead", timestamp.Format("2006-01-02 15:04:05.000"))
-                    timestamp = time.Now()
-                }
-            } else {
-                cm.log.Warning("Failed to parse start time for %s: %v, using time.Now()", segmentPath, err)
-                timestamp = time.Now()
-            }
+    // Parse segment nummer voor logging
+    filenameRegex := regexp.MustCompile(`segment_cycle(\d+)_(\d+)\.ts$`)
+    matches := filenameRegex.FindStringSubmatch(segmentPath)
+    segmentNum := 0
+    if len(matches) == 3 {
+        segNum, err := strconv.Atoi(matches[2])
+        if err != nil {
+            cm.log.Warning("Failed to parse segment number from %s: %v, assuming 0", segmentPath, err)
+            segmentNum = 0
         } else {
-            cm.log.Warning("No start time found for %s, using time.Now()", segmentPath)
-            timestamp = time.Now()
+            segmentNum = segNum
         }
     } else {
-        cm.log.Warning("ffprobe failed for %s: %v, using time.Now()", segmentPath, err)
-        timestamp = time.Now()
+        cm.log.Warning("Failed to parse cycle and segment numbers from %s, assuming segment 0", segmentPath)
     }
+
+    // Timestamp is creationTime (einde segment) minus segmentDuration
+    timestamp := creationTime.Add(-time.Duration(cm.segmentDuration) * time.Second)
 
     segmentInfo := SegmentInfo{
         Path:      absolutePath,
@@ -542,22 +514,20 @@ func (cm *ClipManager) addSegment(segmentPath string) {
             if err := os.Remove(old.Path); err != nil {
                 cm.log.Error("Failed to remove old segment %s: %v", old.Path, err)
             } else {
-                cm.log.Info("Removed old segment: %s", old.Path)
+                cm.log.Info("Removed old segment: %s", filepath.Base(old.Path))
             }
         }
         cm.segments = cm.segments[len(cm.segments)-maxSegments:]
     }
 
-    // Non-blocking send
     select {
     case cm.segmentChan <- segmentInfo:
-        // Successfully sent
     default:
         cm.log.Warning("segmentChan full, skipping notification (normal if no clips requested recently)")
     }
 
-    cm.log.Info("Added segment: %s with timestamp %s, total: %d (up to %d seconds)",
-        segmentPath, segmentInfo.Timestamp.Format("15:04:05.000"), len(cm.segments), len(cm.segments)*cm.segmentDuration)
+    cm.log.Info("Added segment: %s (seg %d) with timestamp %s, total: %d (up to %d seconds)",
+        segmentPath, segmentNum, segmentInfo.Timestamp.Format("15:04:05"), len(cm.segments), len(cm.segments)*cm.segmentDuration)
 }
 
 func (cm *ClipManager) getVideoAspectRatio(filePath string) (string, error) {
@@ -617,22 +587,31 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
     var neededSegments []SegmentInfo
     cm.log.Info("Starting segment selection...")
     
+    hasAudio, audioErr := cm.hasAudioStream(cm.cameraIP)
+    hasVideo, videoErr := cm.hasVideoStream(cm.cameraIP)
+    if audioErr != nil {
+        cm.log.Warning("Could not determine if stream has audio, assuming no audio: %v", audioErr)
+        hasAudio = false
+    }
+    if videoErr != nil {
+        cm.log.Warning("Could not determine if stream has video, assuming no video: %v", videoErr)
+        hasVideo = false
+    }
+
     for {
-        cm.log.Info("Acquiring R-Lock for segment selection")
         cm.segmentsMutex.RLock()
         segments := make([]SegmentInfo, len(cm.segments))
         copy(segments, cm.segments)
         cm.segmentsMutex.RUnlock()
-        cm.log.Info("Released R-Lock after copying %d segments", len(segments))
+        cm.log.Info("Copied %d segments", len(segments))
 
         if len(segments) == 0 {
             cm.log.Warning("No segments available, waiting for first segment...")
             select {
             case newSegment := <-cm.segmentChan:
-                cm.log.Info("📼 Received first segment: %s with timestamp %s", 
-                    filepath.Base(newSegment.Path), newSegment.Timestamp.Format("15:04:05.000"))
+                cm.log.Info("📼 Received first segment: %s at %s", filepath.Base(newSegment.Path), newSegment.Timestamp.Format("15:04:05.000"))
                 continue
-            case <-time.After(30 * time.Second):
+            case <-time.After(10 * time.Second):
                 return fmt.Errorf("timeout waiting for first segment")
             }
         }
@@ -648,47 +627,34 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
             latestSegmentEnd.Format("15:04:05.000"))
 
         if startTime.Before(earliestTime) {
-            cm.log.Warning("⚠️ Requested start time %s is before earliest segment at %s", 
+            cm.log.Warning("Requested start time %s is before earliest segment at %s, adjusting", 
                 startTime.Format("15:04:05.000"), earliestTime.Format("15:04:05.000"))
             startTime = earliestTime
             endTime = startTime.Add(time.Duration(durationSeconds) * time.Second)
-            cm.log.Info("🔄 Adjusted clip time to %s to %s", startTime.Format("15:04:05.000"), endTime.Format("15:04:05.000"))
         }
 
-        // Check if we need to wait for more segments to cover the end time
-        if endTime.After(latestSegmentEnd) {
-            cm.log.Info("⏳ End time %s is after latest segment end at %s, waiting for more segments...", 
+        // Wacht alleen als we te weinig dekking hebben
+        if endTime.After(latestSegmentEnd) && latestSegmentEnd.Before(startTime.Add(time.Duration(durationSeconds/2)*time.Second)) {
+            cm.log.Info("⏳ End time %s is after latest segment end %s, waiting for more segments...", 
                 endTime.Format("15:04:05.000"), latestSegmentEnd.Format("15:04:05.000"))
-                
-            timeout := time.After(2 * time.Duration(durationSeconds) * time.Second)
             select {
             case newSegment := <-cm.segmentChan:
                 cm.log.Info("📼 Received new segment: %s at %s", 
                     filepath.Base(newSegment.Path), newSegment.Timestamp.Format("15:04:05.000"))
                 continue
-            case <-timeout:
-                cm.log.Warning("Timeout waiting for segments to cover end time. Using what we have so far.")
-                // Instead of failing, try to use what we have (if we're close enough)
-                if latestSegmentEnd.After(endTime.Add(-time.Duration(cm.segmentDuration) * time.Second)) {
-                    cm.log.Info("Latest segment end is close enough to requested end time, continuing...")
-                    // Continue with the segments we have
-                } else {
-                    return fmt.Errorf("timeout waiting for segments to cover end time %s, last segment ends at %s", 
-                        endTime.Format("15:04:05.000"), latestSegmentEnd.Format("15:04:05.000"))
-                }
+            case <-time.After(5 * time.Second):
+                cm.log.Warning("Timeout waiting for segments, checking available segments")
+                // Ga verder als we enige overlap hebben
+                break
             }
         }
 
-        // Collect all segments that overlap with our requested time range
-        cm.log.Info("Searching for segments between %s and %s", startTime.Format("15:04:05.000"), endTime.Format("15:04:05.000"))
-        for i, segment := range segments {
+        for _, segment := range segments {
             segmentStart := segment.Timestamp
             segmentEnd := segmentStart.Add(time.Duration(cm.segmentDuration) * time.Second)
-            
-            // Check if this segment overlaps with our target range
             if segmentEnd.After(startTime) && segmentStart.Before(endTime) {
                 neededSegments = append(neededSegments, segment)
-                cm.log.Debug("Selected segment %d: %s (%s to %s)", i, 
+                cm.log.Debug("Selected segment: %s (%s to %s)", 
                     filepath.Base(segment.Path), 
                     segmentStart.Format("15:04:05.000"), 
                     segmentEnd.Format("15:04:05.000"))
@@ -696,11 +662,9 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
         }
 
         if len(neededSegments) > 0 {
-            // Sort by timestamp to ensure proper ordering
             sort.Slice(neededSegments, func(i, j int) bool {
                 return neededSegments[i].Timestamp.Before(neededSegments[j].Timestamp)
             })
-
             firstSegmentStart := neededSegments[0].Timestamp
             lastSegmentEnd := neededSegments[len(neededSegments)-1].Timestamp.Add(time.Duration(cm.segmentDuration) * time.Second)
 
@@ -709,46 +673,29 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
                 firstSegmentStart.Format("15:04:05.000"), 
                 lastSegmentEnd.Format("15:04:05.000"))
 
-            // Accept segments with a small margin for the start and end time
-            // Half a segment duration margin for flexibility
-            marginDuration := time.Duration(cm.segmentDuration/2) * time.Second
-            
-            if firstSegmentStart.After(startTime.Add(marginDuration)) {
-                cm.log.Warning("First segment starts at %s, which is too late (requested start: %s, margin: %v)",
-                    firstSegmentStart.Format("15:04:05.000"), startTime.Format("15:04:05.000"), marginDuration)
-                cm.log.Warning("Waiting for more segments to cover the beginning...")
-                continue
+            // Accepteer als we enige overlap hebben, zelfs als niet volledig gedekt
+            if firstSegmentStart.Before(endTime) && lastSegmentEnd.After(startTime) {
+                cm.log.Info("Partial overlap found, proceeding with available segments")
+                break
             }
-            
-            if lastSegmentEnd.Before(endTime.Add(-marginDuration)) {
-                cm.log.Warning("Last segment ends at %s, which is too early (requested end: %s, margin: %v)",
-                    lastSegmentEnd.Format("15:04:05.000"), endTime.Format("15:04:05.000"), marginDuration)
-                cm.log.Warning("Waiting for more segments to cover the end...")
-                continue
-            }
-
-            // We have sufficient segments with acceptable margins
-            break
+            cm.log.Warning("No sufficient overlap, waiting for more segments...")
         }
 
-        cm.log.Warning("No overlapping segments found, waiting for more segments...")
         select {
         case newSegment := <-cm.segmentChan:
             cm.log.Info("📼 Received new segment: %s at %s", 
                 filepath.Base(newSegment.Path), newSegment.Timestamp.Format("15:04:05.000"))
             continue
-        case <-time.After(30 * time.Second):
+        case <-time.After(5 * time.Second):
+            if len(neededSegments) > 0 {
+                cm.log.Warning("Timeout waiting for full coverage, using partial segments")
+                break
+            }
             return fmt.Errorf("timeout waiting for overlapping segments")
         }
     }
 
     cm.log.Success("Selected %d segments for clip", len(neededSegments))
-
-    // Log each selected segment for debugging
-    for i, segment := range neededSegments {
-        cm.log.Debug("Segment %d: %s (timestamp: %s)", i, 
-            filepath.Base(segment.Path), segment.Timestamp.Format("15:04:05.000"))
-    }
 
     concatListPath := filepath.Join(cm.tempDir, "concat_list.txt")
     concatFile, err := os.Create(concatListPath)
@@ -758,116 +705,55 @@ func (cm *ClipManager) RecordClip(backtrackSeconds, durationSeconds int, outputP
     defer os.Remove(concatListPath)
 
     for _, segment := range neededSegments {
-        filename := filepath.Base(segment.Path)
-        fmt.Fprintf(concatFile, "file '%s'\n", filename)
+        fmt.Fprintf(concatFile, "file '%s'\n", segment.Path)
     }
     concatFile.Close()
 
     firstSegmentStart := neededSegments[0].Timestamp
-	startOffset := startTime.Sub(firstSegmentStart).Seconds()
-	if startOffset < 0 {
-		startOffset = 0
-	}
+    startOffset := startTime.Sub(firstSegmentStart).Seconds()
+    if startOffset < 0 {
+        startOffset = 0
+    }
+    totalDuration := endTime.Sub(startTime).Seconds()
 
-	totalDuration := endTime.Sub(startTime).Seconds()
+    args := []string{
+        "-f", "concat",
+        "-safe", "0",
+        "-i", concatListPath,
+        "-ss", fmt.Sprintf("%.3f", startOffset),
+        "-t", fmt.Sprintf("%.3f", totalDuration),
+    }
 
-	// Check if input has video before extracting
-	hasVideo := true
-	videoCheckPath := neededSegments[0].Path
-	cmd := exec.Command("ffprobe",
-		"-v", "error",
-		"-select_streams", "v:0",
-		"-show_entries", "stream=width,height",
-		"-of", "json",
-		videoCheckPath)
+    if hasVideo {
+        args = append(args, "-c:v", "copy")
+    } else if hasAudio {
+        args = append(args, "-f", "lavfi", "-i", "color=c=black:s=640x480:r=25:d="+fmt.Sprintf("%.3f", totalDuration))
+    }
+    if hasAudio {
+        args = append(args, "-c:a", "copy")
+    } else {
+        args = append(args, "-an")
+    }
 
-	var probeOut bytes.Buffer
-	cmd.Stdout = &probeOut
-	if err := cmd.Run(); err != nil || probeOut.String() == "{\"streams\":[]}\n" {
-		cm.log.Warning("No video stream found in segments, this appears to be an audio-only clip")
-		hasVideo = false
-	}
+    args = append(args, "-movflags", "+faststart", "-y", outputPath)
 
-	args := []string{
-		"-f", "concat",
-		"-safe", "0",
-		"-i", concatListPath,
-		"-ss", fmt.Sprintf("%.3f", startOffset),
-		"-t", fmt.Sprintf("%.3f", totalDuration),
-	}
+    cm.log.Debug("Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
+    cmd := exec.Command("ffmpeg", args...)
+    var stderr bytes.Buffer
+    cmd.Stderr = &stderr
+    err = cmd.Run()
+    if err != nil {
+        return fmt.Errorf("failed to extract clip: %v\nFFmpeg output: %s", err, stderr.String())
+    }
 
-	if hasVideo {
-		args = append(args, "-c:v", "copy")
-	} else {
-		// For audio-only, create a black video
-		args = append(args, "-f", "lavfi", "-i", "color=c=black:s=640x480:r=25:d="+fmt.Sprintf("%.3f", totalDuration))
-	}
+    extractedDuration, err := cm.verifyClipDuration(outputPath)
+    if err != nil {
+        os.Remove(outputPath)
+        return err
+    }
 
-	args = append(args, "-c:a", "copy", "-movflags", "+faststart", "-y", outputPath)
-
-	cm.log.Debug("Clip extraction FFmpeg command: ffmpeg %s", strings.Join(args, " "))
-	cmd = exec.Command("ffmpeg", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err = cmd.Run()
-	if err != nil {
-		return fmt.Errorf("failed to extract clip from segments: %v\nFFmpeg output: %s", err, stderr.String())
-	}
-
-	extractedDuration, err := cm.verifyClipDuration(outputPath)
-	if err != nil {
-		os.Remove(outputPath)
-		return err
-	}
-
-	cm.log.Success("Successfully extracted clip with duration %.2f seconds", extractedDuration)
-
-	fileInfo, err := os.Stat(outputPath)
-	if err != nil {
-		return fmt.Errorf("could not access the extracted clip file: %v", err)
-	}
-
-	if fileInfo.Size() < 1024 {
-		os.Remove(outputPath)
-		return fmt.Errorf("extracted clip is too small (%.2f KB), possibly no valid data in the segments", float64(fileInfo.Size())/1024)
-	}
-
-	aspectRatio, err := cm.getVideoAspectRatio(outputPath)
-	if err != nil {
-		cm.log.Warning("Warning: Could not determine aspect ratio of clip: %v", err)
-		return nil
-	}
-
-	cm.log.Info("📏 Detected aspect ratio of clip: %s", aspectRatio)
-
-	fixedOutputPath := filepath.Join(cm.tempDir, fmt.Sprintf("fixed_%s", filepath.Base(outputPath)))
-	fixArgs := []string{
-		"-i", outputPath,
-		"-c:v", "copy",
-		"-c:a", "copy",
-		"-aspect", aspectRatio,
-		"-y",
-		fixedOutputPath,
-	}
-
-	cm.log.Debug("Fixing aspect ratio with FFmpeg command: ffmpeg %s", strings.Join(fixArgs, " "))
-	fixCmd := exec.Command("ffmpeg", fixArgs...)
-	var fixStderr bytes.Buffer
-	fixCmd.Stderr = &fixStderr
-	err = fixCmd.Run()
-	if err != nil {
-		cm.log.Warning("Warning: Failed to fix aspect ratio: %v\nFFmpeg output: %s", err, fixStderr.String())
-		return nil
-	}
-
-	if err := os.Rename(fixedOutputPath, outputPath); err != nil {
-		cm.log.Warning("Warning: Failed to replace original file with fixed aspect ratio file: %v", err)
-		os.Remove(fixedOutputPath)
-		return nil
-	}
-
-	cm.log.Success("Aspect ratio fixed for clip: %s", outputPath)
-	return nil
+    cm.log.Success("Successfully extracted clip with duration %.2f seconds", extractedDuration)
+    return nil
 }
 
 func (cm *ClipManager) verifyClipDuration(filePath string) (float64, error) {
