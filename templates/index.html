@@ -16,8 +16,7 @@
     <div id="errorMessage" class="error-message">Error: <span id="errorText"></span></div>
 
     <div class="tabs">
-        <div class="tab active" data-tab="form-tab">Configure Request</div>
-        <div class="tab" id="integrationTab" data-tab="integration-tab">Integration</div>
+        <div class="tab active" data-tab="form-tab">Configuration</div>
         <div class="tab" data-tab="clips-tab">Clips</div>
     </div>
 
@@ -129,23 +128,6 @@
         </form>
     </div>
 
-    <div id="integration-tab" class="tab-content">
-        <div class="section">
-            <h3>HTML Button Code</h3>
-            <div class="code-container">
-                <pre id="htmlCode"></pre>
-                <button class="copy-btn" data-target="htmlCode">Copy</button>
-            </div>
-        </div>
-        <div class="section">
-            <h3>cURL Command</h3>
-            <div class="code-container">
-                <pre id="curlCode"></pre>
-                <button class="copy-btn" data-target="curlCode">Copy</button>
-            </div>
-        </div>
-    </div>
-
     <div id="clips-tab" class="tab-content">
         <div id="sftp-config" class="section">
             <h3>SFTP Server Settings</h3>
@@ -218,6 +200,13 @@
 
     <script>
         let savedData = null;
+        let sftpSettings = null;
+        let allClips = [];
+        let filteredClips = [];
+        let currentPage = 1;
+        const itemsPerPage = 12;
+        let ws = null;
+        let pollingInterval = null;
 
         function collectFormData() {
             const selectedApps = [];
@@ -261,6 +250,120 @@
             return data;
         }
 
+        function loadSavedData() {
+            const saved = localStorage.getItem('configSettings');
+            if (saved) {
+                try {
+                    savedData = JSON.parse(saved);
+                    
+                    // Populate form fields with saved data
+                    document.getElementById('backtrack_seconds').value = savedData.backtrack_seconds || 10;
+                    document.getElementById('duration_seconds').value = savedData.duration_seconds || 10;
+                    document.getElementById('category').value = savedData.category || '';
+                    document.getElementById('team1').value = savedData.team1 || '';
+                    document.getElementById('team2').value = savedData.team2 || '';
+                    document.getElementById('additional_text').value = savedData.additional_text || '';
+                    
+                    // Handle chat apps
+                    const chatApps = savedData.chat_app ? savedData.chat_app.split(',') : [];
+                    document.querySelectorAll('.chat-app-checkbox').forEach(checkbox => {
+                        checkbox.checked = chatApps.includes(checkbox.value);
+                        const fields = document.getElementById(checkbox.value + '-fields');
+                        if (fields) {
+                            fields.style.display = checkbox.checked ? 'block' : 'none';
+                        }
+                    });
+                    
+                    // Populate app-specific fields
+                    if (chatApps.includes('telegram')) {
+                        document.getElementById('telegram_bot_token').value = savedData.telegram_bot_token || '';
+                        document.getElementById('telegram_chat_id').value = savedData.telegram_chat_id || '';
+                    }
+                    
+                    if (chatApps.includes('mattermost')) {
+                        document.getElementById('mattermost_url').value = savedData.mattermost_url || '';
+                        document.getElementById('mattermost_token').value = savedData.mattermost_token || '';
+                        document.getElementById('mattermost_channel').value = savedData.mattermost_channel || '';
+                    }
+                    
+                    if (chatApps.includes('discord')) {
+                        document.getElementById('discord_webhook_url').value = savedData.discord_webhook_url || '';
+                    }
+                    
+                    if (chatApps.includes('sftp')) {
+                        document.getElementById('sftp_host').value = savedData.sftp_host || '';
+                        document.getElementById('sftp_port').value = savedData.sftp_port || '';
+                        document.getElementById('sftp_user').value = savedData.sftp_user || '';
+                        document.getElementById('sftp_password').value = savedData.sftp_password || '';
+                        document.getElementById('sftp_path').value = savedData.sftp_path || '';
+                    }
+                    
+                    // Show integration section if config is loaded
+                    updateIntegrationSection();
+                } catch (e) {
+                    console.error("Error loading configuration settings:", e);
+                    localStorage.removeItem('configSettings');
+                }
+            }
+        }
+
+        function updateIntegrationSection() {
+            if (!savedData) return;
+            
+            // Create or update integration section
+            let integrationSection = document.getElementById('integration-section');
+            
+            if (!integrationSection) {
+                // Create the section if it doesn't exist
+                integrationSection = document.createElement('div');
+                integrationSection.id = 'integration-section';
+                integrationSection.className = 'section';
+                
+                const formTab = document.getElementById('form-tab');
+                formTab.appendChild(integrationSection);
+            }
+            
+            // Update content
+            const url = new URL('/api/clip', window.location.origin);
+            for (const [k, v] of Object.entries(savedData)) {
+                if (v !== '' && v !== false) {
+                    url.searchParams.set(k, v);
+                }
+            }
+            
+            integrationSection.innerHTML = `
+                <h3>Integration Options</h3>
+                <div class="section">
+                    <h4>HTML Button Code</h4>
+                    <div class="code-container">
+                        <pre id="htmlCode"><button onclick="fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)">Record Clip</button></pre>
+                        <button class="copy-btn" data-target="htmlCode">Copy</button>
+                    </div>
+                </div>
+                <div class="section">
+                    <h4>cURL Command</h4>
+                    <div class="code-container">
+                        <pre id="curlCode">curl "${url.toString()}"</pre>
+                        <button class="copy-btn" data-target="curlCode">Copy</button>
+                    </div>
+                </div>
+            `;
+            
+            // Re-attach copy button event listeners
+            document.querySelectorAll('.copy-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const targetId = this.getAttribute('data-target');
+                    const text = document.getElementById(targetId).textContent;
+                    navigator.clipboard.writeText(text)
+                        .then(() => {
+                            const original = this.textContent;
+                            this.textContent = 'Copied!';
+                            setTimeout(() => { this.textContent = original; }, 1500);
+                        });
+                });
+            });
+        }
+
         function recordClip() {
             const formData = collectFormData();
             const url = new URL('/api/clip', window.location.origin);
@@ -299,6 +402,18 @@
         }
 
         document.addEventListener('DOMContentLoaded', function () {
+            // Remove the integration tab
+            const integrationTab = document.getElementById('integrationTab');
+            if (integrationTab) {
+                integrationTab.remove();
+            }
+            
+            // Remove the integration tab content
+            const integrationTabContent = document.getElementById('integration-tab');
+            if (integrationTabContent) {
+                integrationTabContent.remove();
+            }
+            
             document.querySelectorAll('.chat-app-checkbox').forEach(checkbox => {
                 checkbox.addEventListener('change', function () {
                     const fields = document.getElementById(this.value + '-fields');
@@ -308,20 +423,32 @@
 
             document.querySelectorAll('.tab').forEach(tab => {
                 tab.addEventListener('click', function () {
-                    if (this.dataset.tab === 'integration-tab' && !savedData) {
-                        alert('Please save your configuration first.');
-                        return;
+                    // Clips tab requires SFTP settings
+                    if (this.dataset.tab === 'clips-tab') {
+                        loadSftpSettings();
                     }
+                    
                     document.querySelectorAll('.tab, .tab-content').forEach(el => el.classList.remove('active'));
                     this.classList.add('active');
                     document.getElementById(this.dataset.tab).classList.add('active');
-                    if (this.dataset.tab === 'integration-tab') updateIntegrationTab();
+                    
+                    // Load clips when switching to clips tab
+                    if (this.dataset.tab === 'clips-tab' && sftpSettings) {
+                        fetchClips();
+                    }
                 });
             });
 
             document.getElementById('saveBtn').addEventListener('click', function () {
                 savedData = collectFormData();
-                alert('Configuration saved!');
+                localStorage.setItem('configSettings', JSON.stringify(savedData));
+                
+                document.getElementById('successMessage').textContent = 'Configuration saved!';
+                document.getElementById('successMessage').style.display = 'block';
+                setTimeout(() => document.getElementById('successMessage').style.display = 'none', 5000);
+                
+                // Show integration section when config is saved
+                updateIntegrationSection();
             });
 
             document.getElementById('recordBtn').addEventListener('click', function (e) {
@@ -341,27 +468,46 @@
                         });
                 });
             });
-        });
-
-        function updateIntegrationTab() {
-            const url = new URL('/api/clip', window.location.origin);
-            for (const [k, v] of Object.entries(savedData)) {
-                if (v !== '' && v !== false) {
-                    url.searchParams.set(k, v);
-                }
+            
+            // Initialize settings
+            loadSavedData();
+            loadSftpSettings();
+            
+            // Setup WebSocket or polling
+            if ("WebSocket" in window) {
+                setupWebSocket();
+            } else {
+                setupPolling();
             }
-
-            document.getElementById('htmlCode').textContent = `<button onclick="fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)">Record Clip</button>`;
-            document.getElementById('curlCode').textContent = `curl "${url.toString()}"`;
-        }
-        
-        let sftpSettings = null;
-        let allClips = [];
-        let filteredClips = [];
-        let currentPage = 1;
-        const itemsPerPage = 12;
-        let ws = null;
-        let pollingInterval = null;
+            
+            // Keyboard shortcuts for player
+            document.addEventListener('keydown', (e) => {
+                const player = document.getElementById('clip-player');
+                const container = document.getElementById('clip-player-container');
+                
+                // Only handle keys if player is visible
+                if (container.style.display === 'none') return;
+                
+                switch (e.key) {
+                    case 'Escape':
+                        closePlayer();
+                        break;
+                    case ' ':
+                        if (player.paused) player.play();
+                        else player.pause();
+                        e.preventDefault();
+                        break;
+                    case 'ArrowRight':
+                        player.currentTime += 5;
+                        e.preventDefault();
+                        break;
+                    case 'ArrowLeft':
+                        player.currentTime -= 5;
+                        e.preventDefault();
+                        break;
+                }
+            });
+        });
 
         function loadSftpSettings() {
             const saved = localStorage.getItem('sftpSettings');
