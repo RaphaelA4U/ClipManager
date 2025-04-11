@@ -12,9 +12,6 @@
         <img src="/static/img/ClipManager.png" alt="ClipManager Logo" width="300">
     </div>
 
-    <div id="successMessage" class="success-message">Clip recording and sending started successfully!</div>
-    <div id="errorMessage" class="error-message">Error: <span id="errorText"></span></div>
-
     <div class="tabs">
         <div class="tab active" data-tab="form-tab">Configuration</div>
         <div class="tab" data-tab="clips-tab">Clips</div>
@@ -331,12 +328,15 @@
                 }
             }
             
+            // Escape HTML tags for display
+            const buttonCode = `<button onclick="fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)">Record Clip</button>`;
+            
             integrationSection.innerHTML = `
                 <h3>Integration Options</h3>
                 <div class="section">
                     <h4>HTML Button Code</h4>
                     <div class="code-container">
-                        <pre id="htmlCode"><button onclick="fetch('${url}',{method:'GET'}).then(r=>r.text()).then(alert)">Record Clip</button></pre>
+                        <pre id="htmlCode">${buttonCode.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
                         <button class="copy-btn" data-target="htmlCode">Copy</button>
                     </div>
                 </div>
@@ -366,6 +366,56 @@
 
         function recordClip() {
             const formData = collectFormData();
+            
+            // Validate required fields
+            const errors = [];
+            
+            // Check backtrack_seconds
+            if (!formData.backtrack_seconds || formData.backtrack_seconds < 0 || formData.backtrack_seconds > 300) {
+                errors.push("Backtrack must be between 0 and 300 seconds");
+            }
+            
+            // Check duration_seconds
+            if (!formData.duration_seconds || formData.duration_seconds < 1 || formData.duration_seconds > 300) {
+                errors.push("Duration must be between 1 and 300 seconds");
+            }
+            
+            // Check that at least one chat app is selected
+            if (!formData.chat_app) {
+                errors.push("Please select at least one destination for your clip");
+            }
+            
+            // Validate platform-specific required fields
+            if (formData.chat_app.includes('telegram')) {
+                if (!formData.telegram_bot_token || !formData.telegram_chat_id) {
+                    errors.push("Telegram requires both Bot Token and Chat ID");
+                }
+            }
+            
+            if (formData.chat_app.includes('mattermost')) {
+                if (!formData.mattermost_url || !formData.mattermost_token || !formData.mattermost_channel) {
+                    errors.push("Mattermost requires URL, API Token, and Channel ID");
+                }
+            }
+            
+            if (formData.chat_app.includes('discord')) {
+                if (!formData.discord_webhook_url) {
+                    errors.push("Discord requires a Webhook URL");
+                }
+            }
+            
+            if (formData.chat_app.includes('sftp')) {
+                if (!formData.sftp_host || !formData.sftp_user || !formData.sftp_password) {
+                    errors.push("SFTP requires Host, Username, and Password");
+                }
+            }
+            
+            // Show errors if any
+            if (errors.length > 0) {
+                alert(errors.join(". "));
+                return;
+            }
+            
             const url = new URL('/api/clip', window.location.origin);
             for (const [key, value] of Object.entries(formData)) {
                 if (value !== '' && value !== false) {
@@ -387,17 +437,10 @@
                 }
             })
             .then(data => {
-                document.getElementById('successMessage').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('successMessage').style.display = 'none';
-                }, 5000);
+                alert('Clip recording and sending started successfully!');
             })
             .catch(err => {
-                document.getElementById('errorText').textContent = err;
-                document.getElementById('errorMessage').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('errorMessage').style.display = 'none';
-                }, 5000);
+                alert('Error: ' + err);
             });
         }
 
@@ -440,12 +483,52 @@
             });
 
             document.getElementById('saveBtn').addEventListener('click', function () {
-                savedData = collectFormData();
+                const formData = collectFormData();
+                
+                // Validate required fields
+                const errors = [];
+                
+                // Check that at least one chat app is selected
+                if (!formData.chat_app) {
+                    errors.push("Please select at least one destination for your clip");
+                }
+                
+                // Validate platform-specific required fields
+                if (formData.chat_app.includes('telegram')) {
+                    if (!formData.telegram_bot_token || !formData.telegram_chat_id) {
+                        errors.push("Telegram requires both Bot Token and Chat ID");
+                    }
+                }
+                
+                if (formData.chat_app.includes('mattermost')) {
+                    if (!formData.mattermost_url || !formData.mattermost_token || !formData.mattermost_channel) {
+                        errors.push("Mattermost requires URL, API Token, and Channel ID");
+                    }
+                }
+                
+                if (formData.chat_app.includes('discord')) {
+                    if (!formData.discord_webhook_url) {
+                        errors.push("Discord requires a Webhook URL");
+                    }
+                }
+                
+                if (formData.chat_app.includes('sftp')) {
+                    if (!formData.sftp_host || !formData.sftp_user || !formData.sftp_password) {
+                        errors.push("SFTP requires Host, Username, and Password");
+                    }
+                }
+                
+                // Show errors if any
+                if (errors.length > 0) {
+                    alert(errors.join(". "));
+                    return;
+                }
+                
+                // Save valid data
+                savedData = formData;
                 localStorage.setItem('configSettings', JSON.stringify(savedData));
                 
-                document.getElementById('successMessage').textContent = 'Configuration saved!';
-                document.getElementById('successMessage').style.display = 'block';
-                setTimeout(() => document.getElementById('successMessage').style.display = 'none', 5000);
+                alert('Configuration saved!');
                 
                 // Show integration section when config is saved
                 updateIntegrationSection();
@@ -535,9 +618,7 @@
             const path = document.getElementById('sftp_path_config').value.trim() || './';
             
             if (!host || !user || !password) {
-                document.getElementById('errorText').textContent = 'All SFTP fields are required except port and path (which have defaults)';
-                document.getElementById('errorMessage').style.display = 'block';
-                setTimeout(() => document.getElementById('errorMessage').style.display = 'none', 5000);
+                alert('All SFTP fields are required except port and path (which have defaults)');
                 return;
             }
             
@@ -550,9 +631,7 @@
             };
             
             localStorage.setItem('sftpSettings', JSON.stringify(sftpSettings));
-            document.getElementById('successMessage').textContent = 'SFTP settings saved!';
-            document.getElementById('successMessage').style.display = 'block';
-            setTimeout(() => document.getElementById('successMessage').style.display = 'none', 5000);
+            alert('SFTP settings saved!');
             showClipsSection();
             fetchClips();
         }
@@ -565,9 +644,7 @@
             const path = document.getElementById('sftp_path_config').value.trim() || './';
             
             if (!host || !user || !password) {
-                document.getElementById('errorText').textContent = 'All SFTP fields are required except port and path (which have defaults)';
-                document.getElementById('errorMessage').style.display = 'block';
-                setTimeout(() => document.getElementById('errorMessage').style.display = 'none', 5000);
+                alert('All SFTP fields are required except port and path (which have defaults)');
                 return;
             }
             
@@ -590,23 +667,17 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    document.getElementById('successMessage').textContent = 'SFTP connection successful!';
-                    document.getElementById('successMessage').style.display = 'block';
+                    alert('SFTP connection successful!');
                 } else {
                     throw new Error(data.message || 'Connection failed');
                 }
             })
             .catch(err => {
-                document.getElementById('errorText').textContent = 'SFTP connection failed: ' + (err.message || err);
-                document.getElementById('errorMessage').style.display = 'block';
+                alert('SFTP connection failed: ' + (err.message || err));
             })
             .finally(() => {
                 document.getElementById('testSftpBtn').disabled = false;
                 document.getElementById('testSftpBtn').innerHTML = 'Test Connection';
-                setTimeout(() => {
-                    document.getElementById('successMessage').style.display = 'none';
-                    document.getElementById('errorMessage').style.display = 'none';
-                }, 5000);
             });
         }
 
@@ -645,10 +716,8 @@
                 applyFilters();
             })
             .catch(err => {
-                document.getElementById('errorText').textContent = 'Failed to fetch clips: ' + err;
-                document.getElementById('errorMessage').style.display = 'block';
+                alert('Failed to fetch clips: ' + err);
                 document.getElementById('clips-list').innerHTML = '<div class="no-clips">Error loading clips. Please check your connection and try again.</div>';
-                setTimeout(() => document.getElementById('errorMessage').style.display = 'none', 5000);
             })
             .finally(() => {
                 document.getElementById('clips-loading').style.display = 'none';
@@ -954,14 +1023,10 @@
                 // Re-render with current filters
                 renderClips();
                 
-                document.getElementById('successMessage').textContent = `"${filename}" deleted successfully`;
-                document.getElementById('successMessage').style.display = 'block';
-                setTimeout(() => document.getElementById('successMessage').style.display = 'none', 5000);
+                alert(`"${filename}" deleted successfully`);
             })
             .catch(err => {
-                document.getElementById('errorText').textContent = 'Failed to delete clip: ' + err;
-                document.getElementById('errorMessage').style.display = 'block';
-                setTimeout(() => document.getElementById('errorMessage').style.display = 'none', 5000);
+                alert('Failed to delete clip: ' + err);
             });
         }
 
