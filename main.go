@@ -24,6 +24,7 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/time/rate"
+	"github.com/gorilla/websocket"
 )
 
 // ANSI color codes
@@ -125,6 +126,8 @@ type ClipManager struct {
 	segmentDuration   int
 	recordingStartTime time.Time // New field to track recording start time
 	log               *Logger 
+	wsClients         map[*websocket.Conn]bool
+	wsClientsLock     sync.RWMutex
 }
 
 func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipManager, error) {
@@ -140,7 +143,7 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
     cm := &ClipManager{
         tempDir:         absTemp,
         httpClient:      &http.Client{Timeout: 60 * time.Second},
-        limiter:         rate.NewLimiter(rate.Limit(1), 1),
+        limiter:         rate.NewLimiter(rate.Limit(3), 5),
         hostPort:        hostPort,
         maxRetries:      3,
         retryDelay:      5 * time.Second,
@@ -149,6 +152,7 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
         segmentChan:     make(chan SegmentInfo, 200), // Increased buffer size provides more headroom
         segmentDuration: 5,
         log:             NewLogger(),
+        wsClients:       make(map[*websocket.Conn]bool),
     }
     
     // Start a background goroutine to manage the channel
@@ -1290,6 +1294,7 @@ func (cm *ClipManager) sendToSFTP(filePath, host, port, user, password, remotePa
         }
 
         cm.log.Success("Clip successfully uploaded to SFTP at %s", remoteFilePath)
+        cm.broadcastNewClip(remoteFilePath)
         return nil
     }
 
@@ -1547,6 +1552,311 @@ func getEmbeddedHTML() string {
 `
 }
 
+// ClipInfo represents metadata about a clip file
+type ClipInfo struct {
+    Name      string    `json:"name"`
+    Size      int64     `json:"size"`
+    ModTime   time.Time `json:"mod_time"`
+    Path      string    `json:"path"`
+}
+
+// HandleListClips returns a list of clips from the SFTP server
+func (cm *ClipManager) HandleListClips(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed, use POST", http.StatusMethodNotAllowed)
+        return
+    }
+
+    var req ClipRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        cm.log.Error("Failed to parse list clips request: %v", err)
+        return
+    }
+
+    // Connect to SFTP and list files
+    clips, err := cm.listSftpClips(req.SFTPHost, req.SFTPPort, req.SFTPUser, req.SFTPPassword, req.SFTPPath)
+    if err != nil {
+        http.Error(w, "Failed to list clips: "+err.Error(), http.StatusInternalServerError)
+        cm.log.Error("Failed to list clips: %v", err)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(clips)
+}
+
+// HandleTestSFTPConnection tests if the SFTP connection works
+func (cm *ClipManager) HandleTestSFTPConnection(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed, use POST", http.StatusMethodNotAllowed)
+        return
+    }
+
+    var req ClipRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        cm.log.Error("Failed to parse SFTP test request: %v", err)
+        return
+    }
+
+    client, err := cm.connectToSFTP(req.SFTPHost, req.SFTPPort, req.SFTPUser, req.SFTPPassword)
+    if err != nil {
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": err.Error()})
+        return
+    }
+    defer client.Close()
+
+    // Try to list the directory to verify permissions
+    path := req.SFTPPath
+    if path == "" {
+        path = "."
+    }
+
+    _, err = client.ReadDir(path)
+    if err != nil {
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]interface{}{
+            "success": false, 
+            "message": fmt.Sprintf("Connected to SFTP but failed to read directory '%s': %v", path, err),
+        })
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Connection successful"})
+}
+
+// HandleDeleteClip deletes a clip from the SFTP server
+func (cm *ClipManager) HandleDeleteClip(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed, use POST", http.StatusMethodNotAllowed)
+        return
+    }
+
+    var req struct {
+        SFTPHost     string `json:"sftp_host"`
+        SFTPPort     string `json:"sftp_port"`
+        SFTPUser     string `json:"sftp_user"`
+        SFTPPassword string `json:"sftp_password"`
+        Path         string `json:"path"`
+    }
+
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        cm.log.Error("Failed to parse delete request: %v", err)
+        return
+    }
+
+    client, err := cm.connectToSFTP(req.SFTPHost, req.SFTPPort, req.SFTPUser, req.SFTPPassword)
+    if err != nil {
+        http.Error(w, fmt.Sprintf("Failed to connect to SFTP: %v", err), http.StatusInternalServerError)
+        return
+    }
+    defer client.Close()
+
+    if err := client.Remove(req.Path); err != nil {
+        http.Error(w, fmt.Sprintf("Failed to delete file: %v", err), http.StatusInternalServerError)
+        cm.log.Error("Failed to delete file %s: %v", req.Path, err)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "File deleted successfully"})
+}
+
+// HandleStreamClip streams a clip from the SFTP server
+func (cm *ClipManager) HandleStreamClip(w http.ResponseWriter, r *http.Request) {
+    path := r.URL.Query().Get("path")
+    if path == "" {
+        http.Error(w, "Missing path parameter", http.StatusBadRequest)
+        return
+    }
+
+    host := r.URL.Query().Get("sftp_host")
+    port := r.URL.Query().Get("sftp_port")
+    user := r.URL.Query().Get("sftp_user")
+    password := r.URL.Query().Get("sftp_password")
+    download := r.URL.Query().Get("download") == "true"
+
+    if port == "" {
+        port = "22"
+    }
+
+    client, err := cm.connectToSFTP(host, port, user, password)
+    if err != nil {
+        http.Error(w, fmt.Sprintf("Failed to connect to SFTP: %v", err), http.StatusInternalServerError)
+        return
+    }
+    defer client.Close()
+
+    file, err := client.Open(path)
+    if err != nil {
+        http.Error(w, fmt.Sprintf("Failed to open file: %v", err), http.StatusNotFound)
+        return
+    }
+    defer file.Close()
+
+    fileInfo, err := file.Stat()
+    if err != nil {
+        http.Error(w, fmt.Sprintf("Failed to get file info: %v", err), http.StatusInternalServerError)
+        return
+    }
+
+    w.Header().Set("Content-Type", "video/mp4")
+    
+    if download {
+        w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(path)))
+    } else {
+        w.Header().Set("Content-Disposition", "inline")
+    }
+    
+    w.Header().Set("Accept-Ranges", "bytes")
+    http.ServeContent(w, r, filepath.Base(path), fileInfo.ModTime(), file)
+}
+
+// Helper method to connect to SFTP
+func (cm *ClipManager) connectToSFTP(host, port, user, password string) (*sftp.Client, error) {
+    if host == "" || user == "" || password == "" {
+        return nil, fmt.Errorf("missing SFTP connection parameters")
+    }
+
+    if port == "" {
+        port = "22"
+    }
+
+    config := &ssh.ClientConfig{
+        User: user,
+        Auth: []ssh.AuthMethod{
+            ssh.Password(password),
+        },
+        HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+        Timeout:         10 * time.Second,
+    }
+
+    addr := fmt.Sprintf("%s:%s", host, port)
+    sshClient, err := ssh.Dial("tcp", addr, config)
+    if err != nil {
+        return nil, fmt.Errorf("failed to connect to SSH: %w", err)
+    }
+
+    sftpClient, err := sftp.NewClient(sshClient)
+    if err != nil {
+        sshClient.Close()
+        return nil, fmt.Errorf("failed to create SFTP client: %w", err)
+    }
+
+    return sftpClient, nil
+}
+
+// List SFTP clips in the specified directory
+func (cm *ClipManager) listSftpClips(host, port, user, password, path string) ([]ClipInfo, error) {
+    client, err := cm.connectToSFTP(host, port, user, password)
+    if err != nil {
+        return nil, err
+    }
+    defer client.Close()
+
+    if path == "" {
+        path = "."
+    }
+
+    files, err := client.ReadDir(path)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read directory %s: %w", path, err)
+    }
+
+    var clips []ClipInfo
+    for _, file := range files {
+        // Only include .mp4 files
+        if !file.IsDir() && strings.HasSuffix(strings.ToLower(file.Name()), ".mp4") {
+            clips = append(clips, ClipInfo{
+                Name:    file.Name(),
+                Size:    file.Size(),
+                ModTime: file.ModTime(),
+                Path:    filepath.Join(path, file.Name()),
+            })
+        }
+    }
+
+    return clips, nil
+}
+
+// WebSocket handling
+var upgrader = websocket.Upgrader{
+    ReadBufferSize:  1024,
+    WriteBufferSize: 1024,
+    CheckOrigin: func(r *http.Request) bool {
+        return true // Allow all origins in development
+    },
+}
+
+// HandleWebSocket manages WebSocket connections for real-time notifications
+func (cm *ClipManager) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+    conn, err := upgrader.Upgrade(w, r, nil)
+    if err != nil {
+        cm.log.Error("Failed to upgrade to WebSocket: %v", err)
+        return
+    }
+
+    cm.wsClientsLock.Lock()
+    cm.wsClients[conn] = true
+    cm.wsClientsLock.Unlock()
+
+    cm.log.Info("New WebSocket client connected, total clients: %d", len(cm.wsClients))
+
+    // Keep the connection open and handle disconnection
+    defer func() {
+        conn.Close()
+        cm.wsClientsLock.Lock()
+        delete(cm.wsClients, conn)
+        cm.wsClientsLock.Unlock()
+        cm.log.Info("WebSocket client disconnected, remaining clients: %d", len(cm.wsClients))
+    }()
+
+    // Simple ping/pong to keep connection alive
+    for {
+        messageType, _, err := conn.ReadMessage()
+        if err != nil {
+            break
+        }
+
+        // If we receive a ping, respond with pong
+        if messageType == websocket.PingMessage {
+            if err := conn.WriteMessage(websocket.PongMessage, []byte{}); err != nil {
+                break
+            }
+        }
+    }
+}
+
+// broadcastNewClip sends a notification to all connected WebSocket clients
+func (cm *ClipManager) broadcastNewClip(clipPath string) {
+    cm.wsClientsLock.RLock()
+    defer cm.wsClientsLock.RUnlock()
+
+    if len(cm.wsClients) == 0 {
+        return // No clients connected
+    }
+
+    notification := map[string]string{"clip_path": clipPath}
+    message, err := json.Marshal(notification)
+    if err != nil {
+        cm.log.Error("Failed to marshal WebSocket notification: %v", err)
+        return
+    }
+
+    cm.log.Info("Broadcasting new clip notification to %d clients", len(cm.wsClients))
+    for client := range cm.wsClients {
+        err := client.WriteMessage(websocket.TextMessage, message)
+        if err != nil {
+            cm.log.Warning("Failed to send WebSocket message: %v", err)
+            // Let the main goroutine handle the disconnection
+        }
+    }
+}
+
 func main() {
 	log.Println("Starting ClipManager...")
 
@@ -1578,6 +1888,11 @@ func main() {
 
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	http.HandleFunc("/api/clip", clipManager.RateLimit(clipManager.HandleClipRequest))
+	http.HandleFunc("/api/clips", clipManager.RateLimit(clipManager.HandleListClips))
+	http.HandleFunc("/api/clips/test", clipManager.RateLimit(clipManager.HandleTestSFTPConnection))
+	http.HandleFunc("/api/clips/delete", clipManager.RateLimit(clipManager.HandleDeleteClip))
+	http.HandleFunc("/api/clip/stream", clipManager.RateLimit(clipManager.HandleStreamClip))
+	http.HandleFunc("/ws", clipManager.HandleWebSocket)
 	http.HandleFunc("/", clipManager.serveWebInterface)
 
 	clipManager.log.Info("ClipManager is running!")
