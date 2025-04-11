@@ -6,187 +6,196 @@
     <title>ClipManager</title>
     <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="icon" href="/static/img/favicon.ico" type="image/x-icon">
+    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="logo-container">
-        <img src="/static/img/ClipManager.png" alt="ClipManager Logo" width="300">
+        <img src="/static/img/ClipManager.png" alt="ClipManager Logo">
+    </div>
+     
+    <div class="header-controls">
+        <button id="fullscreenBtn" class="fullscreen-btn" title="Enter Fullscreen">
+            <i class="mdi mdi-fullscreen"></i>
+        </button>
     </div>
 
-    <div class="tabs">
-        <div class="tab active" data-tab="form-tab">Configuration</div>
-        <div class="tab" data-tab="clips-tab">Clips</div>
-    </div>
+    <div class="page-content">
+        <div class="tabs">
+            <div class="tab active" data-tab="form-tab">Configuration</div>
+            <div class="tab" data-tab="clips-tab">Clips</div>
+        </div>
 
-    <div id="form-tab" class="tab-content active">
-        <form id="clipForm">
-            <div class="form-group">
-                <label>Backtrack Seconds:</label>
-                <input type="number" id="backtrack_seconds" value="10" min="0" max="300">
-            </div>
-            <div class="form-group">
-                <label>Duration Seconds:</label>
-                <input type="number" id="duration_seconds" value="10" min="1" max="300">
-            </div>
-            <div class="form-group">
-                <label>Chat App(s):</label>
-                <div class="chat-app-selector">
-                    <label><input type="checkbox" class="chat-app-checkbox" value="telegram"> Telegram</label>
-                    <label><input type="checkbox" class="chat-app-checkbox" value="mattermost"> Mattermost</label>
-                    <label><input type="checkbox" class="chat-app-checkbox" value="discord"> Discord</label>
-                    <label><input type="checkbox" class="chat-app-checkbox" value="sftp"> SFTP</label>
+        <div id="form-tab" class="tab-content active">
+            <form id="clipForm">
+                <div class="form-group">
+                    <label>Backtrack Seconds:</label>
+                    <input type="number" id="backtrack_seconds" value="10" min="0" max="300">
                 </div>
-            </div>
-            <div class="form-group">
-                <label>Category (optional):</label>
-                <input type="text" id="category">
-            </div>
-            <div class="form-group">
-                <label>Team 1 (optional):</label>
-                <input type="text" id="team1">
-            </div>
-            <div class="form-group">
-                <label>Team 2 (optional):</label>
-                <input type="text" id="team2">
-            </div>
-            <div class="form-group">
-                <label>Additional Text (optional):</label>
-                <input type="text" id="additional_text">
-            </div>
+                <div class="form-group">
+                    <label>Duration Seconds:</label>
+                    <input type="number" id="duration_seconds" value="10" min="1" max="300">
+                </div>
+                <div class="form-group">
+                    <label>Chat App(s):</label>
+                    <div class="chat-app-selector">
+                        <label><input type="checkbox" class="chat-app-checkbox" value="telegram"> Telegram</label>
+                        <label><input type="checkbox" class="chat-app-checkbox" value="mattermost"> Mattermost</label>
+                        <label><input type="checkbox" class="chat-app-checkbox" value="discord"> Discord</label>
+                        <label><input type="checkbox" class="chat-app-checkbox" value="sftp"> SFTP</label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Category (optional):</label>
+                    <input type="text" id="category">
+                </div>
+                <div class="form-group">
+                    <label>Team 1 (optional):</label>
+                    <input type="text" id="team1">
+                </div>
+                <div class="form-group">
+                    <label>Team 2 (optional):</label>
+                    <input type="text" id="team2">
+                </div>
+                <div class="form-group">
+                    <label>Additional Text (optional):</label>
+                    <input type="text" id="additional_text">
+                </div>
 
-            <!-- Dynamic fields that will appear based on selected chat apps -->
-            <div id="chat-app-fields">
-                <!-- Telegram fields -->
-                <div id="telegram-fields" class="chat-app-fields" style="display: none;">
-                    <h3>Telegram Settings</h3>
-                    <div class="form-group">
-                        <label>Bot Token:</label>
-                        <input type="text" id="telegram_bot_token">
+                <!-- Dynamic fields that will appear based on selected chat apps -->
+                <div id="chat-app-fields">
+                    <!-- Telegram fields -->
+                    <div id="telegram-fields" class="chat-app-fields" style="display: none;">
+                        <h3>Telegram Settings</h3>
+                        <div class="form-group">
+                            <label>Bot Token:</label>
+                            <input type="text" id="telegram_bot_token">
+                        </div>
+                        <div class="form-group">
+                            <label>Chat ID:</label>
+                            <input type="text" id="telegram_chat_id">
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label>Chat ID:</label>
-                        <input type="text" id="telegram_chat_id">
+                    
+                    <!-- Mattermost fields -->
+                    <div id="mattermost-fields" class="chat-app-fields" style="display: none;">
+                        <h3>Mattermost Settings</h3>
+                        <div class="form-group">
+                            <label>Mattermost URL:</label>
+                            <input type="text" id="mattermost_url" placeholder="https://mattermost.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>API Token:</label>
+                            <input type="text" id="mattermost_token">
+                        </div>
+                        <div class="form-group">
+                            <label>Channel ID:</label>
+                            <input type="text" id="mattermost_channel">
+                        </div>
+                    </div>
+                    
+                    <!-- Discord fields -->
+                    <div id="discord-fields" class="chat-app-fields" style="display: none;">
+                        <h3>Discord Settings</h3>
+                        <div class="form-group">
+                            <label>Webhook URL:</label>
+                            <input type="text" id="discord_webhook_url" placeholder="https://discord.com/api/webhooks/id/token">
+                        </div>
+                    </div>
+                    
+                    <!-- SFTP fields -->
+                    <div id="sftp-fields" class="chat-app-fields" style="display: none;">
+                        <h3>SFTP Settings</h3>
+                        <div class="form-group">
+                            <label>SFTP Host:</label>
+                            <input type="text" id="sftp_host">
+                        </div>
+                        <div class="form-group">
+                            <label>SFTP Port (default: 22):</label>
+                            <input type="text" id="sftp_port" placeholder="22">
+                        </div>
+                        <div class="form-group">
+                            <label>SFTP Username:</label>
+                            <input type="text" id="sftp_user">
+                        </div>
+                        <div class="form-group">
+                            <label>SFTP Password:</label>
+                            <input type="password" id="sftp_password">
+                        </div>
+                        <div class="form-group">
+                            <label>Remote Path (optional):</label>
+                            <input type="text" id="sftp_path" placeholder="./">
+                        </div>
                     </div>
                 </div>
                 
-                <!-- Mattermost fields -->
-                <div id="mattermost-fields" class="chat-app-fields" style="display: none;">
-                    <h3>Mattermost Settings</h3>
-                    <div class="form-group">
-                        <label>Mattermost URL:</label>
-                        <input type="text" id="mattermost_url" placeholder="https://mattermost.example.com">
-                    </div>
-                    <div class="form-group">
-                        <label>API Token:</label>
-                        <input type="text" id="mattermost_token">
-                    </div>
-                    <div class="form-group">
-                        <label>Channel ID:</label>
-                        <input type="text" id="mattermost_channel">
-                    </div>
-                </div>
-                
-                <!-- Discord fields -->
-                <div id="discord-fields" class="chat-app-fields" style="display: none;">
-                    <h3>Discord Settings</h3>
-                    <div class="form-group">
-                        <label>Webhook URL:</label>
-                        <input type="text" id="discord_webhook_url" placeholder="https://discord.com/api/webhooks/id/token">
-                    </div>
-                </div>
-                
-                <!-- SFTP fields -->
-                <div id="sftp-fields" class="chat-app-fields" style="display: none;">
-                    <h3>SFTP Settings</h3>
+                <button type="button" id="saveBtn">Save</button>
+                <button type="button" id="recordBtn">Record Clip</button>        
+            </form>
+        </div>
+
+        <div id="clips-tab" class="tab-content">
+            <div id="sftp-config" class="section">
+                <h3>SFTP Server Settings</h3>
+                <p>Configure the SFTP server where your clips are stored.</p>
+                <form id="sftpForm">
                     <div class="form-group">
                         <label>SFTP Host:</label>
-                        <input type="text" id="sftp_host">
+                        <input type="text" id="sftp_host_config">
                     </div>
                     <div class="form-group">
-                        <label>SFTP Port (default: 22):</label>
-                        <input type="text" id="sftp_port" placeholder="22">
+                        <label>SFTP Port:</label>
+                        <input type="text" id="sftp_port_config" placeholder="22">
                     </div>
                     <div class="form-group">
                         <label>SFTP Username:</label>
-                        <input type="text" id="sftp_user">
+                        <input type="text" id="sftp_user_config">
                     </div>
                     <div class="form-group">
                         <label>SFTP Password:</label>
-                        <input type="password" id="sftp_password">
+                        <input type="password" id="sftp_password_config">
                     </div>
                     <div class="form-group">
-                        <label>Remote Path (optional):</label>
-                        <input type="text" id="sftp_path" placeholder="./">
+                        <label>Remote Path:</label>
+                        <input type="text" id="sftp_path_config" placeholder="./">
                     </div>
-                </div>
+                    <div class="sftp-controls">
+                        <button type="button" id="saveSftpBtn">Save SFTP Settings</button>
+                        <button type="button" id="testSftpBtn">Test Connection</button>
+                    </div>
+                </form>
             </div>
             
-            <button type="button" id="saveBtn">Save</button>
-            <button type="button" id="recordBtn">Record Clip</button>        
-        </form>
-    </div>
-
-    <div id="clips-tab" class="tab-content">
-        <div id="sftp-config" class="section">
-            <h3>SFTP Server Settings</h3>
-            <p>Configure the SFTP server where your clips are stored.</p>
-            <form id="sftpForm">
-                <div class="form-group">
-                    <label>SFTP Host:</label>
-                    <input type="text" id="sftp_host_config">
+            <div id="clips-section" class="section" style="display: none;">
+                <div class="section-header">
+                    <h3>Clips</h3>
+                    <button id="refreshClipsBtn"><span class="spinner" style="display: none;"></span>Refresh</button>
                 </div>
-                <div class="form-group">
-                    <label>SFTP Port:</label>
-                    <input type="text" id="sftp_port_config" placeholder="22">
+                <div class="filter-group">
+                    <div class="form-group">
+                        <label>Category:</label>
+                        <input type="text" id="filter_category" placeholder="E.g. highlight">
+                    </div>
+                    <div class="form-group">
+                        <label>Team:</label>
+                        <input type="text" id="filter_team" placeholder="E.g. team1 or team2">
+                    </div>
+                    <div class="form-group">
+                        <label>Start Date:</label>
+                        <input type="date" id="filter_start_date">
+                    </div>
+                    <div class="form-group">
+                        <label>End Date:</label>
+                        <input type="date" id="filter_end_date">
+                    </div>
+                    <button id="applyFilterBtn">Apply Filter</button>
+                    <button id="resetFilterBtn">Reset</button>
                 </div>
-                <div class="form-group">
-                    <label>SFTP Username:</label>
-                    <input type="text" id="sftp_user_config">
+                <div id="clips-loading" class="clips-loading" style="display: none;">
+                    <span class="spinner"></span> Loading clips...
                 </div>
-                <div class="form-group">
-                    <label>SFTP Password:</label>
-                    <input type="password" id="sftp_password_config">
-                </div>
-                <div class="form-group">
-                    <label>Remote Path:</label>
-                    <input type="text" id="sftp_path_config" placeholder="./">
-                </div>
-                <div class="sftp-controls">
-                    <button type="button" id="saveSftpBtn">Save SFTP Settings</button>
-                    <button type="button" id="testSftpBtn">Test Connection</button>
-                </div>
-            </form>
-        </div>
-        
-        <div id="clips-section" class="section" style="display: none;">
-            <div class="section-header">
-                <h3>Clips</h3>
-                <button id="refreshClipsBtn"><span class="spinner" style="display: none;"></span>Refresh</button>
+                <div id="clips-list" class="clips-list"></div>
+                <div id="pagination" class="pagination"></div>
             </div>
-            <div class="filter-group">
-                <div class="form-group">
-                    <label>Category:</label>
-                    <input type="text" id="filter_category" placeholder="E.g. highlight">
-                </div>
-                <div class="form-group">
-                    <label>Team:</label>
-                    <input type="text" id="filter_team" placeholder="E.g. team1 or team2">
-                </div>
-                <div class="form-group">
-                    <label>Start Date:</label>
-                    <input type="date" id="filter_start_date">
-                </div>
-                <div class="form-group">
-                    <label>End Date:</label>
-                    <input type="date" id="filter_end_date">
-                </div>
-                <button id="applyFilterBtn">Apply Filter</button>
-                <button id="resetFilterBtn">Reset</button>
-            </div>
-            <div id="clips-loading" class="clips-loading" style="display: none;">
-                <span class="spinner"></span> Loading clips...
-            </div>
-            <div id="clips-list" class="clips-list"></div>
-            <div id="pagination" class="pagination"></div>
         </div>
     </div>
     
@@ -204,6 +213,7 @@
         const itemsPerPage = 12;
         let ws = null;
         let pollingInterval = null;
+        let isFullscreen = false;
 
         function collectFormData() {
             const selectedApps = [];
@@ -590,6 +600,31 @@
                         break;
                 }
             });
+
+            // Add fullscreen button functionality
+            document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+            
+            // Update fullscreen icon when fullscreen state changes
+            document.addEventListener('fullscreenchange', updateFullscreenIcon);
+            document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
+            document.addEventListener('mozfullscreenchange', updateFullscreenIcon);
+            document.addEventListener('MSFullscreenChange', updateFullscreenIcon);
+            
+            function updateFullscreenIcon() {
+                const isFullscreen = document.fullscreenElement || 
+                                    document.webkitFullscreenElement || 
+                                    document.mozFullScreenElement ||
+                                    document.msFullscreenElement;
+                
+                const iconElement = document.querySelector('#fullscreenBtn i');
+                if (isFullscreen) {
+                    iconElement.className = 'mdi mdi-fullscreen-exit';
+                    document.querySelector('.fullscreen-btn').title = 'Exit Fullscreen';
+                } else {
+                    iconElement.className = 'mdi mdi-fullscreen';
+                    document.querySelector('.fullscreen-btn').title = 'Enter Fullscreen';
+                }
+            }
         });
 
         function loadSftpSettings() {
@@ -1178,6 +1213,36 @@
                 }
             });
         });
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement && 
+                !document.mozFullScreenElement && 
+                !document.webkitFullscreenElement && 
+                !document.msFullscreenElement) {
+                // Enter fullscreen
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen();
+                } else if (document.documentElement.msRequestFullscreen) {
+                    document.documentElement.msRequestFullscreen();
+                } else if (document.documentElement.mozRequestFullScreen) {
+                    document.documentElement.mozRequestFullScreen();
+                } else if (document.documentElement.webkitRequestFullscreen) {
+                    document.documentElement.webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
+                }
+            } else {
+                // Exit fullscreen
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                } else if (document.msExitFullscreen) {
+                    document.msExitFullscreen();
+                } else if (document.mozCancelFullScreen) {
+                    document.mozCancelFullScreen();
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
+                }
+            }
+            // The icon will be updated by the fullscreenchange event handler
+        }
     </script>
 </body>
 </html>
