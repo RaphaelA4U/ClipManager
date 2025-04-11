@@ -2,21 +2,37 @@ body {
     font-family: Arial, sans-serif;
     background-color: #121212;
     color: #ffffff;
-    max-width: 800px;
-    margin: auto;
+    margin: 0;
+    padding: 0;
+}
+
+/* Container for layout control */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
     padding: 0 20px 20px;
+}
+
+/* Header section with logo and controls */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    position: relative;
+    margin-bottom: 20px;
 }
 
 .logo-container {
     display: flex;
+    justify-content: center;
     align-items: center;
-    position: absolute;
-    top: 30px;
-    left: 50px;
+    position: relative;
 }
 
 .logo-container img {
-    width: 400px;
+    width: 100%;
+    max-width: 400px;
     height: auto;
 }
 
@@ -29,19 +45,16 @@ body {
     color: #ffffff;
     border: 1px solid #444;
     border-radius: 4px;
-    width: 50px;
-    height: 50px;
+    width: 40px;
+    height: 40px;
     cursor: pointer;
-    position: absolute;
-    top: 50px;
-    right: 50px;
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
 .fullscreen-btn i {
-    font-size: 36px;
+    font-size: 24px;
 }
 
 .fullscreen-btn:hover {
@@ -201,7 +214,7 @@ pre {
     color: white;
 }
 
-.copy-btn:hover {
+copy-btn:hover {
     background-color: #254db3;
 }
 
@@ -403,5 +416,153 @@ pre {
 
 /* Add page top padding to make room for fixed header */
 .page-content {
-    margin-top: 100px;
+    margin-top: 0;
+}
+
+/* Media Queries for Responsive Design */
+
+/* Large desktop (1200px and up) */
+@media (min-width: 1200px) {
+    .container {
+        max-width: 1140px;
+    }
+}
+
+/* Desktop (992px to 1199px) */
+@media (min-width: 992px) and (max-width: 1199px) {
+    .container {
+        max-width: 960px;
+    }
+    
+    .logo-container img {
+        max-width: 350px;
+    }
+}
+
+/* Tablet landscape (768px to 991px) */
+@media (min-width: 768px) and (max-width: 991px) {
+    .container {
+        max-width: 720px;
+    }
+    
+    .logo-container img {
+        max-width: 300px;
+    }
+    
+    .clips-list {
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    }
+}
+
+/* Tablet portrait (576px to 767px) */
+@media (min-width: 576px) and (max-width: 767px) {
+    .container {
+        max-width: 540px;
+    }
+    
+    .header {
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .logo-container img {
+        max-width: 250px;
+    }
+    
+    .fullscreen-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+    }
+    
+    .clips-list {
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    }
+    
+    .tabs {
+        flex-wrap: wrap;
+    }
+}
+
+/* Mobile phone (575px and below) */
+@media (max-width: 575px) {
+    .container {
+        padding: 0 15px 15px;
+    }
+    
+    .header {
+        flex-direction: column;
+        align-items: center;
+        padding: 15px 0;
+    }
+    
+    .logo-container img {
+        max-width: 200px;
+    }
+    
+    .fullscreen-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 35px;
+        height: 35px;
+    }
+    
+    .fullscreen-btn i {
+        font-size: 20px;
+    }
+    
+    .tab {
+        padding: 8px 12px;
+        font-size: 14px;
+    }
+    
+    .clips-list {
+        grid-template-columns: 1fr;
+        gap: 15px;
+    }
+    
+    button {
+        padding: 8px 12px;
+        margin-bottom: 5px;
+    }
+    
+    .sftp-controls {
+        flex-direction: column;
+    }
+    
+    .filter-group {
+        padding: 10px;
+        gap: 10px;
+    }
+    
+    .filter-group .form-group {
+        min-width: 100%;
+    }
+    
+    /* Adjust form elements for better mobile experience */
+    input[type="text"],
+    input[type="number"],
+    input[type="date"],
+    input[type="password"],
+    select {
+        font-size: 16px; /* Prevents iOS zoom on focus */
+        box-sizing: border-box;
+    }
+}
+
+/* Special case for small phones in landscape orientation */
+@media (max-width: 767px) and (orientation: landscape) {
+    .header {
+        padding: 10px 0;
+        flex-direction: row;
+    }
+    
+    .logo-container img {
+        max-width: 180px;
+    }
+    
+    .clips-list {
+        grid-template-columns: repeat(2, 1fr);
+    }
 }
