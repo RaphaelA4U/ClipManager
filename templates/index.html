@@ -746,18 +746,8 @@
             container.style.display = 'block';
             player.classList.add('fullscreen');
             
-            // Auto hide cursor after inactivity
-            let timeout;
-            const resetTimeout = () => {
-                clearTimeout(timeout);
-                document.body.style.cursor = 'default';
-                timeout = setTimeout(() => {
-                    document.body.style.cursor = 'none';
-                }, 3000);
-            };
-            
-            resetTimeout();
-            container.addEventListener('mousemove', resetTimeout);
+            // Add ended event listener to auto-close the player when video completes
+            player.addEventListener('ended', closePlayer);
             
             // Focus the player for keyboard controls
             player.focus();
@@ -770,8 +760,10 @@
             player.pause();
             player.src = '';
             container.style.display = 'none';
-            document.body.style.cursor = 'default';
             player.classList.remove('fullscreen');
+            
+            // Remove the ended event listener to prevent memory leaks
+            player.removeEventListener('ended', closePlayer);
         }
 
         function downloadClip(path, filename) {
@@ -853,9 +845,9 @@
                     // Refresh clips list
                     fetchClips();
                     
-                    // Play new clip if user isn't actively filtering or viewing other clips
-                    const player = document.getElementById('clip-player');
-                    if (!player.src && data.clip_path) {
+                    // Always play new clip unless player is already active
+                    const playerContainer = document.getElementById('clip-player-container');
+                    if (data.clip_path && playerContainer.style.display === 'none') {
                         setTimeout(() => playClip(data.clip_path), 500);
                     }
                 } catch (e) {
