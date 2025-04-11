@@ -864,7 +864,7 @@
                         <div class="clip-metadata">${formatFileSize(clip.size)}</div>
                     </div>
                     <div class="clip-actions">
-                        <button class="play-clip-btn" data-path="${clip.path}">Play</button>
+                        <button class="upload-btn" data-path="${clip.path}">Upload</button>
                         <button class="download-clip-btn" data-path="${clip.path}" data-name="${clip.name}">Download</button>
                         <button class="delete-clip-btn" data-path="${clip.path}">Delete</button>
                     </div>
@@ -875,7 +875,7 @@
                 // Add event listeners
                 const video = clipElement.querySelector('video');
                 const playBtn = clipElement.querySelector('.play-btn');
-                const playClipBtn = clipElement.querySelector('.play-clip-btn');
+                const uploadBtn = clipElement.querySelector('.upload-btn');
                 const downloadBtn = clipElement.querySelector('.download-clip-btn');
                 const deleteBtn = clipElement.querySelector('.delete-clip-btn');
                 
@@ -892,8 +892,8 @@
                     playClip(clip.path);
                 });
                 
-                playClipBtn.addEventListener('click', () => {
-                    playClip(clip.path);
+                uploadBtn.addEventListener('click', () => {
+                    console.log('upload');
                 });
                 
                 downloadBtn.addEventListener('click', () => {
