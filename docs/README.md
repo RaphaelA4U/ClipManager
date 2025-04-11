@@ -13,6 +13,8 @@ ClipManager is a simple, fast, and lightweight tool to record clips from an RTSP
 - Add categories to organize your clips.
 - Easy-to-use web interface for configuration.
 - Automatic compression for large videos (except for SFTP).
+- Browse, stream, download, and manage clips uploaded to SFTP.
+- Receive real-time notifications of new clip uploads via WebSockets.
 - API for programmatic control.
 - **Optional Button Integration**: Trigger clips with a physical button using an Arduino (see [ARDUINO_BUTTON.md](ARDUINO_BUTTON.md) for details).
 
@@ -136,6 +138,45 @@ Returns a JSON object with a `message` field indicating the request was received
 - **SFTP Connection Issues**: Verify hostname, port, credentials and that the server accepts password authentication.
 
 For advanced usage, troubleshooting, and technical specifics, see [DEVELOPER.md](DEVELOPER.md).
+
+## SFTP Management Features
+
+ClipManager provides additional endpoints to manage clips stored on SFTP servers:
+
+### SFTP Endpoints
+
+#### `/api/clips` - List clips from the SFTP server
+- **Method**: POST
+- **Parameters**: Same SFTP parameters as above (`sftp_host`, `sftp_port`, `sftp_user`, `sftp_password`, `sftp_path`)
+- **Response**: JSON array of clip information objects containing `name`, `size`, `mod_time`, and `path`
+
+#### `/api/clips/test` - Test SFTP connection
+- **Method**: POST
+- **Parameters**: Same SFTP parameters as above
+- **Response**: JSON object with `success` and `message` fields
+
+#### `/api/clips/delete` - Delete a clip from the SFTP server
+- **Method**: POST
+- **Parameters**:
+  - Same SFTP parameters as above
+  - `path`: Path to the file to delete
+- **Response**: JSON object with `success` and `message` fields
+
+#### `/api/clip/stream` - Stream or download a clip from the SFTP server
+- **Method**: GET
+- **Query Parameters**:
+  - Same SFTP parameters as above
+  - `path`: Path to the file to stream
+  - `download`: Set to `true` to download the file instead of streaming (optional)
+- **Response**: Video file for direct playback in browser or download
+
+### WebSocket Notifications
+
+ClipManager supports real-time notifications for new clips uploaded to SFTP:
+
+#### `/ws` - WebSocket endpoint for real-time notifications
+- Connect to this WebSocket endpoint to receive notifications when new clips are uploaded
+- Falls back to polling if WebSockets are not supported by the browser
 
 ## Optional Button Integration
 Want to trigger clips with a physical button? ClipManager supports an optional button integration using an Arduino and a Windows PC. See [ARDUINO_BUTTON.md](ARDUINO_BUTTON.md) for setup instructions.
