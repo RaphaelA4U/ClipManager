@@ -36,6 +36,7 @@
                     <label><input type="checkbox" class="chat-app-checkbox" value="telegram"> Telegram</label>
                     <label><input type="checkbox" class="chat-app-checkbox" value="mattermost"> Mattermost</label>
                     <label><input type="checkbox" class="chat-app-checkbox" value="discord"> Discord</label>
+                    <label><input type="checkbox" class="chat-app-checkbox" value="sftp"> SFTP</label>
                 </div>
             </div>
             <div class="form-group">
@@ -95,6 +96,31 @@
                         <input type="text" id="discord_webhook_url" placeholder="https://discord.com/api/webhooks/id/token">
                     </div>
                 </div>
+                
+                <!-- SFTP fields -->
+                <div id="sftp-fields" class="chat-app-fields" style="display: none;">
+                    <h3>SFTP Settings</h3>
+                    <div class="form-group">
+                        <label>SFTP Host:</label>
+                        <input type="text" id="sftp_host">
+                    </div>
+                    <div class="form-group">
+                        <label>SFTP Port (default: 22):</label>
+                        <input type="text" id="sftp_port" placeholder="22">
+                    </div>
+                    <div class="form-group">
+                        <label>SFTP Username:</label>
+                        <input type="text" id="sftp_user">
+                    </div>
+                    <div class="form-group">
+                        <label>SFTP Password:</label>
+                        <input type="password" id="sftp_password">
+                    </div>
+                    <div class="form-group">
+                        <label>Remote Path (optional):</label>
+                        <input type="text" id="sftp_path" placeholder="./">
+                    </div>
+                </div>
             </div>
             
             <button type="button" id="saveBtn">Save</button>
@@ -151,6 +177,14 @@
 
             if (selectedApps.includes('discord')) {
                 data.discord_webhook_url = document.getElementById('discord_webhook_url').value;
+            }
+            
+            if (selectedApps.includes('sftp')) {
+                data.sftp_host = document.getElementById('sftp_host').value;
+                data.sftp_port = document.getElementById('sftp_port').value;
+                data.sftp_user = document.getElementById('sftp_user').value;
+                data.sftp_password = document.getElementById('sftp_password').value;
+                data.sftp_path = document.getElementById('sftp_path').value;
             }
 
             return data;

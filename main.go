@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/pkg/sftp"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/time/rate"
 )
 
@@ -91,6 +93,11 @@ type ClipRequest struct {
 	MattermostToken   string `json:"mattermost_token"`
 	MattermostChannel string `json:"mattermost_channel"`
 	DiscordWebhookURL string `json:"discord_webhook_url"`
+	SFTPHost          string `json:"sftp_host"`     // New field
+	SFTPPort          string `json:"sftp_port"`     // New field
+	SFTPUser          string `json:"sftp_user"`     // New field
+	SFTPPassword      string `json:"sftp_password"` // New field
+	SFTPPath          string `json:"sftp_path"`     // New field
 }
 
 type ClipResponse struct {
@@ -274,8 +281,26 @@ func (cm *ClipManager) validateRequest(req *ClipRequest) error {
 			if req.DiscordWebhookURL == "" {
 				return fmt.Errorf("missing required parameter for Discord: discord_webhook_url")
 			}
+		case "sftp":
+			if req.SFTPHost == "" {
+				return fmt.Errorf("missing required parameter for SFTP: sftp_host")
+			}
+			if req.SFTPPort == "" {
+				req.SFTPPort = "22" // Default SFTP port
+			} else if port, err := strconv.Atoi(req.SFTPPort); err != nil || port < 1 || port > 65535 {
+				return fmt.Errorf("invalid sftp_port: must be a valid port number between 1 and 65535")
+			}
+			if req.SFTPUser == "" {
+				return fmt.Errorf("missing required parameter for SFTP: sftp_user")
+			}
+			if req.SFTPPassword == "" {
+				return fmt.Errorf("missing required parameter for SFTP: sftp_password")
+			}
+			if req.SFTPPath == "" {
+				req.SFTPPath = "." // Default to current directory
+			}
 		default:
-			return fmt.Errorf("invalid chat_app parameter '%s'. Supported values are: 'telegram', 'mattermost', or 'discord'", app)
+			return fmt.Errorf("invalid chat_app parameter '%s'. Supported values are: 'telegram', 'mattermost', 'discord', 'sftp'", app)
 		}
 	}
 
@@ -853,6 +878,7 @@ func (cm *ClipManager) PrepareClipForChatApp(originalFilePath, chatApp string) (
 		"discord":    10.0,
 		"telegram":   50.0,
 		"mattermost": 100.0,
+		"sftp":       10000.0, // High value to avoid compression for SFTP
 	}
 
 	const maxCRF = 40
@@ -1205,6 +1231,121 @@ func (cm *ClipManager) sendToDiscord(filePath, webhookURL string, r *http.Reques
     return cm.RetryOperation(operation, "Discord")
 }
 
+// sendToSFTP uploads a file to an SFTP server
+func (cm *ClipManager) sendToSFTP(filePath, host, port, user, password, remotePath string, r *http.Request) error {
+    operation := func() error {
+        // Configure SSH client
+        config := &ssh.ClientConfig{
+            User: user,
+            Auth: []ssh.AuthMethod{
+                ssh.Password(password),
+            },
+            HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Note: Use a proper host key verification in production
+        }
+
+        // Connect to SSH server
+        addr := fmt.Sprintf("%s:%s", host, port)
+        client, err := ssh.Dial("tcp", addr, config)
+        if err != nil {
+            return fmt.Errorf("failed to dial SSH: %v", err)
+        }
+        defer client.Close()
+
+        // Create SFTP client
+        sftpClient, err := sftp.NewClient(client)
+        if err != nil {
+            return fmt.Errorf("failed to create SFTP client: %v", err)
+        }
+        defer sftpClient.Close()
+
+        // Open local file
+        localFile, err := os.Open(filePath)
+        if err != nil {
+            return fmt.Errorf("could not open local file: %v", err)
+        }
+        defer localFile.Close()
+
+        // Generate remote filename
+        remoteFileName := cm.generateSFTPFilename(r)
+        
+        // Ensure remote path exists
+        if remotePath != "." && remotePath != "" {
+            if err := sftpClient.MkdirAll(remotePath); err != nil {
+                cm.log.Warning("Could not create remote directory: %v, will try to upload to existing path", err)
+            }
+        }
+        
+        remoteFilePath := filepath.Join(remotePath, remoteFileName)
+        
+        // Create remote file
+        remoteFile, err := sftpClient.Create(remoteFilePath)
+        if err != nil {
+            return fmt.Errorf("failed to create remote file: %v", err)
+        }
+        defer remoteFile.Close()
+
+        // Copy file content
+        if _, err := io.Copy(remoteFile, localFile); err != nil {
+            return fmt.Errorf("failed to copy file to SFTP server: %v", err)
+        }
+
+        cm.log.Success("Clip successfully uploaded to SFTP at %s", remoteFilePath)
+        return nil
+    }
+
+    return cm.RetryOperation(operation, "SFTP")
+}
+
+// generateSFTPFilename creates a filename based on request parameters
+func (cm *ClipManager) generateSFTPFilename(r *http.Request) string {
+    var category, team1, team2 string
+
+    if r.Method == http.MethodGet {
+        category = r.URL.Query().Get("category")
+        team1 = r.URL.Query().Get("team1")
+        team2 = r.URL.Query().Get("team2")
+    } else if r.Method == http.MethodPost {
+        var req ClipRequest
+        if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+            category = req.Category
+            team1 = req.Team1
+            team2 = req.Team2
+        }
+        r.Body = io.NopCloser(bytes.NewBuffer([]byte{}))
+    }
+
+    // Sanitize inputs to avoid invalid characters
+    sanitize := func(s string) string {
+        reg, _ := regexp.Compile("[^a-zA-Z0-9_-]+")
+        return reg.ReplaceAllString(strings.TrimSpace(s), "_")
+    }
+
+    category = sanitize(category)
+    team1 = sanitize(team1)
+    team2 = sanitize(team2)
+
+    timestamp := time.Now().Format("2006-01-02_15-04")
+    var parts []string
+
+    if category != "" {
+        parts = append(parts, category)
+    }
+
+    if team1 != "" && team2 != "" {
+        parts = append(parts, fmt.Sprintf("%s_vs_%s", team1, team2))
+    } else if team1 != "" {
+        parts = append(parts, team1)
+    } else if team2 != "" {
+        parts = append(parts, team2)
+    }
+
+    if len(parts) == 0 {
+        return fmt.Sprintf("%s.mp4", timestamp)
+    }
+
+    return fmt.Sprintf("%s_%s.mp4", strings.Join(parts, "_"), timestamp)
+}
+
 func (cm *ClipManager) SendToChatApp(originalFilePath string, r *http.Request) error {
     chatApps := strings.ToLower(r.URL.Query().Get("chat_app"))
     if chatApps == "" && r.Method == http.MethodPost {
@@ -1224,7 +1365,9 @@ func (cm *ClipManager) SendToChatApp(originalFilePath string, r *http.Request) e
     for _, app := range chatAppList {
         app = strings.TrimSpace(app)
 
-        filePath, err := cm.PrepareClipForChatApp(originalFilePath, app)
+        filePath := originalFilePath
+        var err error
+        filePath, err = cm.PrepareClipForChatApp(originalFilePath, app)
         if err != nil {
             cm.log.Error("Error preparing clip for %s: %v", app, err)
             errors <- fmt.Errorf("error preparing clip for %s: %v", app, err)
@@ -1253,6 +1396,19 @@ func (cm *ClipManager) SendToChatApp(originalFilePath string, r *http.Request) e
             case "discord":
                 webhookURL := r.URL.Query().Get("discord_webhook_url")
                 err = cm.sendToDiscord(filePath, webhookURL, r)
+            case "sftp":
+                host := r.URL.Query().Get("sftp_host")
+                port := r.URL.Query().Get("sftp_port")
+                if port == "" {
+                    port = "22"
+                }
+                user := r.URL.Query().Get("sftp_user")
+                password := r.URL.Query().Get("sftp_password")
+                path := r.URL.Query().Get("sftp_path")
+                if path == "" {
+                    path = "."
+                }
+                err = cm.sendToSFTP(filePath, host, port, user, password, path, r)
             default:
                 err = fmt.Errorf("unsupported chat app: %s", app)
             }
