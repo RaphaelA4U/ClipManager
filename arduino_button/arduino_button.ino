@@ -1,5 +1,5 @@
 // Configurable identifier for this Arduino
-const char* IDENTIFIER = "CLIPMANAGER_TEST"; // Change this to e.g. "CLIPMANAGER_HYPE" or "CLIPMANAGER_BLUNDER"
+const char* IDENTIFIER = "CLIPMANAGER_Highlight"; // Change this to e.g. "CLIPMANAGER_ONE-HIT-WONDER" or "CLIPMANAGER_BLUNDER"
 
 int buttonState = 1; // INPUT_PULLUP reverses logic, so 1 is actually 0 (high == low); default buttonstate = low
 const int buttonPin = 12;
@@ -13,7 +13,7 @@ void setup() {
   Serial.println("Arduino started with identifier: " + String(IDENTIFIER));
 
   // Startup delay to prevent initial triggers
-  delay(5000);  // 5 second delay after startup
+  delay(500);  // 0.5 second delay after startup
   startupComplete = true;
 }
 
