@@ -144,4 +144,44 @@ The `generateSFTPFilename` function creates filenames based on request parameter
 ## Optional Button Integration
 ClipManager supports an optional button integration using an Arduino and a PowerShell script on a Windows PC to trigger clip recordings with a physical button. For details on implementation and setup, see [ARDUINO_BUTTON.md](ARDUINO_BUTTON.md).
 
+## YouTube Upload Integration
+
+ClipManager supports direct uploads to YouTube via the YouTube Data API v3. This feature allows users to upload clips to their personal YouTube channels.
+
+### Authentication Flow
+
+- Uses Google's JavaScript client (`gapi`) to manage OAuth2 authentication
+- Authenticates users with popup consent window
+- Requests scope `https://www.googleapis.com/auth/youtube.upload`
+- Stores access tokens in browser's localStorage
+- No server-side token storage - authentication is entirely client-side
+
+### Upload Process
+
+- Each clip in the UI has an "Upload" button
+- Clicking the button checks if the user is authenticated with YouTube
+- If not authenticated, prompts for YouTube login
+- Once authenticated, displays a modal with fields for:
+  - Video title (defaults to clip name)
+  - Description
+  - Privacy setting (Public/Unlisted/Private)
+- Files are uploaded directly from the browser to YouTube using multipart upload
+- Progress is shown during upload
+- User receives success or error notifications
+
+### Implementation Details
+
+- Uses the YouTube Data API v3 endpoint: `https://www.googleapis.com/upload/youtube/v3/videos`
+- Files are streamed from SFTP to browser, then to YouTube
+- Upload uses a two-step process:
+  1. Initialize upload session with metadata
+  2. Upload video data to the provided upload URL
+- Error handling includes YouTube quota limits, authentication issues, and network problems
+
+### User Account Management
+
+- Users can connect their own YouTube account
+- Users can disconnect accounts to switch to different ones
+- Authentication state is preserved between sessions
+
 See the source code for detailed implementation.

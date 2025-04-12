@@ -8,15 +8,17 @@ ClipManager is a simple, fast, and lightweight tool to record clips from an RTSP
 
 ## Features
 
-- Record clips from any RTSP camera with up to 300 seconds of backtracking.
-- Send clips to Telegram, Mattermost, Discord, or upload to an SFTP server (or all at once!).
-- Add categories to organize your clips.
-- Easy-to-use web interface for configuration.
-- Automatic compression for large videos (except for SFTP).
-- Browse, stream, download, and manage clips uploaded to SFTP.
-- Receive real-time notifications of new clip uploads via WebSockets.
-- API for programmatic control.
-- **Optional Button Integration**: Trigger clips with a physical button using an Arduino (see [ARDUINO_BUTTON.md](ARDUINO_BUTTON.md) for details).
+- **Seamless Backtracking**: Capture moments that already happened, up to 5 minutes (300 seconds) in the past.
+- **Configurable Duration**: Set custom lengths for your clips.
+- **Multi-Platform Delivery**:
+  - **Telegram**: Send clips to channels or chats
+  - **Mattermost**: Post to your team's channels
+  - **Discord**: Share via webhooks
+  - **SFTP**: Upload to your server for storage
+- **Clip Management**: Browse, play, download, and delete clips from the web interface.
+- **Real-time Updates**: WebSocket notifications when new clips are created.
+- **Integration Options**: Embed in your applications via API or custom buttons.
+- **✨ YouTube Upload**: Upload clips directly to your YouTube channel with customizable titles, descriptions, and privacy settings.
 
 ## Requirements
 

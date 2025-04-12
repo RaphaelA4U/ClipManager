@@ -9,6 +9,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1770,7 +1771,7 @@ func (cm *ClipManager) listSftpClips(host, port, user, password, path string) ([
     var clips []ClipInfo
     for _, file := range files {
         // Only include .mp4 files
-        if !file.IsDir() && strings.HasSuffix(strings.ToLower(file.Name()), ".mp4") {
+        if (!file.IsDir() && strings.HasSuffix(strings.ToLower(file.Name()), ".mp4")) {
             clips = append(clips, ClipInfo{
                 Name:    file.Name(),
                 Size:    file.Size(),
@@ -1823,7 +1824,7 @@ func (cm *ClipManager) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
         }
 
         // If we receive a ping, respond with pong
-        if messageType == websocket.PingMessage {
+        if (messageType == websocket.PingMessage) {
             if err := conn.WriteMessage(websocket.PongMessage, []byte{}); err != nil {
                 break
             }
@@ -1894,6 +1895,99 @@ func main() {
 	http.HandleFunc("/api/clip/stream", clipManager.RateLimit(clipManager.HandleStreamClip))
 	http.HandleFunc("/ws", clipManager.HandleWebSocket)
 	http.HandleFunc("/", clipManager.serveWebInterface)
+	
+	// OAuth2 callback handler for YouTube integration
+	http.HandleFunc("/oauth2callback", func(w http.ResponseWriter, r *http.Request) {
+		// Parse the authorization code from URL
+		r.ParseForm()
+		code := r.FormValue("code")
+		if code == "" {
+			http.Error(w, "Missing authorization code", http.StatusBadRequest)
+			clipManager.log.Error("OAuth2 callback: missing authorization code")
+			return
+		}
+
+		// Handle error return
+		if errMsg := r.FormValue("error"); errMsg != "" {
+			http.Error(w, "Authorization failed: "+errMsg, http.StatusBadRequest)
+			clipManager.log.Error("OAuth2 callback error: %s", errMsg)
+			return
+		}
+
+		// Create the form data for token exchange
+		tokenURL := "https://oauth2.googleapis.com/token"
+		
+		// The client will send the client ID and secret via the URL
+		// In a production app, you might want to store these securely server-side
+		data := url.Values{
+			"code":          {code},
+			// We don't store client credentials server-side, the client needs to provide them
+			"client_id":     {r.FormValue("client_id")},
+			"client_secret": {r.FormValue("client_secret")},
+			"redirect_uri":  {fmt.Sprintf("%s/oauth2callback", r.Header.Get("Origin"))},
+			"grant_type":    {"authorization_code"},
+		}
+		
+		// Exchange the code for tokens
+		clipManager.log.Info("Exchanging authorization code for token")
+		resp, err := http.PostForm(tokenURL, data)
+		if err != nil {
+			http.Error(w, "Token exchange failed", http.StatusInternalServerError)
+			clipManager.log.Error("Token exchange failed: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		
+		// Check response status
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			http.Error(w, fmt.Sprintf("Token exchange failed: %s", body), resp.StatusCode)
+			clipManager.log.Error("Token exchange failed with status %d: %s", resp.StatusCode, body)
+			return
+		}
+		
+		// Parse token response
+		var tokenRes struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int    `json:"expires_in"`
+			TokenType    string `json:"token_type"`
+		}
+		
+		if err := json.NewDecoder(resp.Body).Decode(&tokenRes); err != nil {
+			http.Error(w, "Failed to parse token response", http.StatusInternalServerError)
+			clipManager.log.Error("Failed to parse token response: %v", err)
+			return
+		}
+		
+		if tokenRes.AccessToken == "" {
+			http.Error(w, "Invalid token response", http.StatusInternalServerError)
+			clipManager.log.Error("Invalid token response: access token missing")
+			return
+		}
+		
+		// Return HTML that sends tokens to the opener window and self-closes
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprintf(w, `<!DOCTYPE html>
+<html>
+<head><title>Authorization Complete</title></head>
+<body>
+  <h2>Authorization Successful</h2>
+  <p>Your YouTube account has been connected. You can close this window.</p>
+  <script>
+    window.opener.postMessage({
+      type: 'yt-auth',
+      accessToken: '%s',
+      refreshToken: '%s',
+      expiresIn: %d
+    }, window.opener.location.origin);
+    setTimeout(() => window.close(), 2000);
+  </script>
+</body>
+</html>`, tokenRes.AccessToken, tokenRes.RefreshToken, tokenRes.ExpiresIn)
+		
+		clipManager.log.Success("YouTube OAuth2 authorization complete")
+	})
 
 	clipManager.log.Info("ClipManager is running!")
 	clipManager.log.Info("Access the web interface at: http://localhost:%s/", hostPort)

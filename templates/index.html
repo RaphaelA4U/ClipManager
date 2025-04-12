@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="icon" href="/static/img/favicon.ico" type="image/x-icon">
     <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+    <script src="https://apis.google.com/js/api.js"></script>
 </head>
 <body>
     <div class="container">
@@ -127,6 +128,19 @@
                             <div class="form-group">
                                 <label>Remote Path (optional):</label>
                                 <input type="text" id="sftp_path" placeholder="./">
+                            </div>
+                        </div>
+                        
+                        <!-- YouTube fields -->
+                        <div class="chat-app-fields">
+                            <h3>YouTube Account</h3>
+                            <div class="form-group">
+                                <p>Upload videos directly to your YouTube channel.</p>
+                                <div class="youtube-buttons">
+                                    <button type="button" id="signInYouTube" class="btn-primary">Connect YouTube Account</button>
+                                    <button type="button" id="signOutYouTube" class="btn-secondary">Sign Out</button>
+                                </div>
+                                <div id="ytStatus" style="margin-top: 10px;"></div>
                             </div>
                         </div>
                     </div>
@@ -932,7 +946,31 @@
                 });
                 
                 uploadBtn.addEventListener('click', () => {
-                    console.log('upload');
+                    // Get the clip information
+                    const clipPath = uploadBtn.getAttribute('data-path');
+                    const clip = filteredClips.find(c => c.path === clipPath);
+                    if (!clip) {
+                        alert("Error: Could not find clip data");
+                        return;
+                    }
+                    
+                    // Store current clip for access in the upload handler
+                    currentClip = clip;
+                    
+                    const token = localStorage.getItem('yt_access_token');
+                    if (!token) {
+                        if (confirm('Je moet eerst je YouTube-account koppelen. Wil je dat nu doen?')) {
+                            signInYouTube().then(() => {
+                                openYouTubeUploadModal(clip);
+                            }).catch(err => {
+                                alert('YouTube inloggen mislukt: ' + (err.error || err.message || 'Onbekende fout'));
+                            });
+                        }
+                        return;
+                    }
+                    
+                    // Open the YouTube upload modal
+                    openYouTubeUploadModal(clip);
                 });
                 
                 downloadBtn.addEventListener('click', () => {
@@ -1247,6 +1285,175 @@
             }
             // The icon will be updated by the fullscreenchange event handler
         }
+        
+        // YouTube Auth + Upload JS
+        const YT_CLIENT_ID = '177621281701-i482ftiuvtg25u0pi76v90o9ji9t133d.apps.googleusercontent.com';
+        let currentClip = null;
+        
+        function initYouTubeAuth() {
+            gapi.load('client:auth2', () => {
+                gapi.auth2.init({
+                    client_id: YT_CLIENT_ID,
+                    scope: 'https://www.googleapis.com/auth/youtube.upload'
+                }).then(() => {
+                    const auth = gapi.auth2.getAuthInstance();
+                    if (auth.isSignedIn.get()) {
+                        const user = auth.currentUser.get();
+                        const token = user.getAuthResponse().access_token;
+                        localStorage.setItem('yt_access_token', token);
+                        document.getElementById('ytStatus').innerText = `✅ Ingelogd als ${user.getBasicProfile().getEmail()}`;
+                        document.getElementById('signInYouTube').style.display = 'none';
+                        document.getElementById('signOutYouTube').style.display = 'block';
+                    } else {
+                        document.getElementById('ytStatus').innerText = `❌ Niet ingelogd`;
+                        document.getElementById('signInYouTube').style.display = 'block';
+                        document.getElementById('signOutYouTube').style.display = 'none';
+                    }
+                });
+            });
+        }
+        
+        function signInYouTube() {
+            gapi.auth2.getAuthInstance().signIn().then(user => {
+                const token = user.getAuthResponse().access_token;
+                localStorage.setItem('yt_access_token', token);
+                document.getElementById('ytStatus').innerText = `✅ Ingelogd als ${user.getBasicProfile().getEmail()}`;
+                document.getElementById('signInYouTube').style.display = 'none';
+                document.getElementById('signOutYouTube').style.display = 'block';
+            });
+        }
+        
+        function signOutYouTube() {
+            gapi.auth2.getAuthInstance().signOut().then(() => {
+                localStorage.removeItem('yt_access_token');
+                document.getElementById('ytStatus').innerText = '❌ Niet ingelogd';
+                document.getElementById('signInYouTube').style.display = 'block';
+                document.getElementById('signOutYouTube').style.display = 'none';
+            });
+        }
+        
+        function openYouTubeUploadModal(clip) {
+            currentClip = clip;
+            document.getElementById('yt-title').value = clip.name.replace(/\.mp4$/, '');
+            
+            // Default description based on clip metadata
+            let description = '';
+            if (clip.category) description += `Category: ${clip.category}\n`;
+            if (clip.team1 && clip.team2) description += `Match: ${clip.team1} vs ${clip.team2}\n`;
+            else if (clip.team1) description += `Team: ${clip.team1}\n`;
+            else if (clip.team2) description += `Team: ${clip.team2}\n`;
+            description += `Date: ${clip.timestamp.toLocaleDateString()}`;
+            
+            document.getElementById('yt-description').value = description;
+            document.getElementById('yt-privacy').value = 'unlisted';
+            document.getElementById('yt-upload-status').innerText = '';
+            document.getElementById('youtube-upload-modal').style.display = 'flex';
+        }
+        
+        function closeYouTubeModal() {
+            document.getElementById('youtube-upload-modal').style.display = 'none';
+        }
+        
+        async function uploadClipToYouTube() {
+            const token = localStorage.getItem('yt_access_token');
+            if (!token || !currentClip) return;
+            
+            const title = document.getElementById('yt-title').value;
+            const description = document.getElementById('yt-description').value;
+            const privacy = document.getElementById('yt-privacy').value;
+            
+            document.getElementById('yt-upload-status').innerText = 'Video wordt opgehaald...';
+            
+            try {
+                // Fetch file from backend
+                const params = new URLSearchParams({
+                    sftp_host: sftpSettings.sftp_host,
+                    sftp_port: sftpSettings.sftp_port || "22",
+                    sftp_user: sftpSettings.sftp_user,
+                    sftp_password: sftpSettings.sftp_password,
+                    path: currentClip.path
+                });
+                
+                const fileResponse = await fetch(`/api/clip/stream?${params}`);
+                const blob = await fileResponse.blob();
+                
+                document.getElementById('yt-upload-status').innerText = 'Upload voorbereiden...';
+                
+                const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                        'X-Upload-Content-Length': blob.size,
+                        'X-Upload-Content-Type': blob.type
+                    },
+                    body: JSON.stringify({
+                        snippet: { title, description },
+                        status: { privacyStatus: privacy }
+                    })
+                });
+                
+                if (!initRes.ok) {
+                    throw new Error('YouTube initialisatie mislukt.');
+                }
+                
+                document.getElementById('yt-upload-status').innerText = 'Bezig met uploaden...';
+                
+                const uploadUrl = initRes.headers.get('Location');
+                const uploadRes = await fetch(uploadUrl, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': blob.type },
+                    body: blob
+                });
+                
+                if (uploadRes.ok) {
+                    const data = await uploadRes.json();
+                    const videoId = data.id;
+                    document.getElementById('yt-upload-status').innerText = '✅ Upload voltooid!';
+                    setTimeout(() => {
+                        closeYouTubeModal();
+                        alert(`✅ Video geüpload naar YouTube!\n\nBekijk op: https://youtu.be/${videoId}`);
+                    }, 2000);
+                } else {
+                    const err = await uploadRes.json();
+                    throw new Error('Fout tijdens upload: ' + (err.error && err.error.message ? err.error.message : 'onbekend'));
+                }
+            } catch (error) {
+                document.getElementById('yt-upload-status').innerText = `❌ Error: ${error.message}`;
+                console.error('YouTube upload failed:', error);
+            }
+        }
+        
+        // Event listeners for YouTube functionality
+        window.addEventListener('load', () => {
+            initYouTubeAuth();
+            
+            document.getElementById('signInYouTube').addEventListener('click', signInYouTube);
+            document.getElementById('signOutYouTube').addEventListener('click', signOutYouTube);
+            document.getElementById('yt-upload-btn').addEventListener('click', uploadClipToYouTube);
+        });
     </script>
+    
+    <!-- YouTube Upload Modal -->
+    <div id="youtube-upload-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <h3>Upload naar YouTube</h3>
+            <label for="yt-title">Titel:</label>
+            <input type="text" id="yt-title" />
+            <label for="yt-description">Beschrijving:</label>
+            <textarea id="yt-description" rows="3"></textarea>
+            <label for="yt-privacy">Privacy:</label>
+            <select id="yt-privacy">
+                <option value="unlisted">Unlisted</option>
+                <option value="public">Public</option>
+                <option value="private">Private</option>
+            </select>
+            <div style="margin-top: 1rem;">
+                <button id="yt-upload-btn">Upload</button>
+                <button onclick="closeYouTubeModal()">Annuleren</button>
+            </div>
+            <div id="yt-upload-status" style="margin-top: 1rem; color: limegreen;"></div>
+        </div>
+    </div>
 </body>
 </html>
