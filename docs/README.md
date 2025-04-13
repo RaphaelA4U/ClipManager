@@ -86,6 +86,7 @@ An endpoint for recording and sending video clips from an RTSP camera stream.
 | `backtrack_seconds` | int    | No       | 0       | Seconds to rewind before recording (0-300)      |
 | `duration_seconds`  | int    | Yes      | -       | Length of clip to record in seconds (1-300)     |
 | `chat_app`          | string | Yes      | -       | Comma-separated list of platforms (`telegram`, `mattermost`, `discord`, `sftp`) |
+| `title`             | string | No       | -       | Optional title for the clip (used for SFTP filename and message) |
 | `category`          | string | No       | -       | Optional label to categorize clips              |
 | `team1`             | string | No       | -       | Name of first team (for sports clips)           |
 | `team2`             | string | No       | -       | Name of second team (for sports clips)          |

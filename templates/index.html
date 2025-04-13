@@ -50,6 +50,10 @@
                         </div>
                     </div>
                     <div class="form-group">
+                        <label>Title (optional):</label>
+                        <input type="text" id="title">
+                    </div>
+                    <div class="form-group">
                         <label>Category (optional):</label>
                         <input type="text" id="category">
                     </div>
@@ -244,6 +248,7 @@
                 backtrack_seconds: parseInt(document.getElementById('backtrack_seconds').value) || 10,
                 duration_seconds: parseInt(document.getElementById('duration_seconds').value) || 10,
                 chat_app: selectedApps.join(','),
+                title: document.getElementById('title').value,
                 category: document.getElementById('category').value,
                 team1: document.getElementById('team1').value,
                 team2: document.getElementById('team2').value,
@@ -285,6 +290,7 @@
                     // Populate form fields with saved data
                     document.getElementById('backtrack_seconds').value = savedData.backtrack_seconds || 10;
                     document.getElementById('duration_seconds').value = savedData.duration_seconds || 10;
+                    document.getElementById('title').value = savedData.title || '';
                     document.getElementById('category').value = savedData.category || '';
                     document.getElementById('team1').value = savedData.team1 || '';
                     document.getElementById('team2').value = savedData.team2 || '';
@@ -786,35 +792,47 @@
             // Find date part (format: YYYY-MM-DD)
             const dateIndex = parts.findIndex(part => /^\d{4}-\d{2}-\d{2}/.test(part));
             if (dateIndex === -1) {
-                return { category: '', team1: '', team2: '' };
+                return { title: '', category: '', team1: '', team2: '' };
             }
             
             // Extract timestamp parts
             const dateStr = parts[dateIndex];
             const timeStr = parts[dateIndex + 1] || '00-00';
             
-            // Parse category and teams
-            let category = '', team1 = '', team2 = '';
+            // Parse title, category and teams
+            let title = '', category = '', team1 = '', team2 = '';
             
             if (dateIndex > 0) {
-                // First part is usually category
-                category = parts[0];
+                // First part is the title in the new format
+                title = parts[0];
                 
-                // Check for team vs team format
-                const remainingParts = parts.slice(1, dateIndex).join('_');
-                const teamMatch = remainingParts.match(/(.+)_vs_(.+)/);
-                
-                if (teamMatch) {
-                    team1 = teamMatch[1];
-                    team2 = teamMatch[2];
-                } else if (dateIndex > 1) {
-                    // If no vs pattern but there are parts between category and date,
-                    // assume it's just team1
-                    team1 = remainingParts;
+                // If we have at least 3 parts before the date (title, category, and something else)
+                if (dateIndex > 1) {
+                    // Second part is the category
+                    category = parts[1];
+                    
+                    // Check for team vs team format in the remaining parts
+                    const remainingParts = parts.slice(2, dateIndex).join('_');
+                    const teamMatch = remainingParts.match(/(.+)_vs_(.+)/);
+                    
+                    if (teamMatch) {
+                        team1 = teamMatch[1];
+                        team2 = teamMatch[2];
+                    } else if (dateIndex > 2) {
+                        // If no vs pattern but there are parts between category and date,
+                        // assume it's just team1
+                        team1 = remainingParts;
+                    }
                 }
             }
             
-            return { category, team1, team2, dateStr, timeStr };
+            // Convert underscores to spaces for display
+            title = title.replace(/_/g, ' ');
+            category = category.replace(/_/g, ' ');
+            team1 = team1.replace(/_/g, ' ');
+            team2 = team2.replace(/_/g, ' ');
+            
+            return { title, category, team1, team2, dateStr, timeStr };
         }
 
         function formatFileSize(bytes) {
@@ -887,7 +905,9 @@
                 const timestamp = clip.timestamp.toLocaleDateString() + ' ' +
                                  clip.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                 
-                let title = clip.category || 'Clip';
+                // Display title as the main heading, fallback to category if title is empty
+                let displayTitle = clip.title || clip.category || 'Clip';
+                
                 let teams = '';
                 if (clip.team1 && clip.team2) {
                     teams = `${clip.team1} vs ${clip.team2}`;
@@ -912,7 +932,8 @@
                         <button class="play-btn" data-path="${clip.path}">▶</button>
                     </div>
                     <div class="clip-info">
-                        <div class="clip-title">${title}</div>
+                        <div class="clip-title">${displayTitle}</div>
+                        ${clip.category && clip.title !== clip.category ? `<div class="clip-metadata">${clip.category}</div>` : ''}
                         ${teams ? `<div class="clip-metadata">${teams}</div>` : ''}
                         <div class="clip-metadata">${timestamp}</div>
                         <div class="clip-metadata">${formatFileSize(clip.size)}</div>
@@ -920,6 +941,7 @@
                     <div class="clip-actions">
                         <button class="upload-btn" data-path="${clip.path}">Upload</button>
                         <button class="download-clip-btn" data-path="${clip.path}" data-name="${clip.name}">Download</button>
+                        <button class="edit-clip-btn" data-path="${clip.path}" data-title="${clip.title}" data-category="${clip.category}">Edit</button>
                         <button class="delete-clip-btn" data-path="${clip.path}">Delete</button>
                     </div>
                 `;
@@ -1182,6 +1204,17 @@
             document.getElementById('testSftpBtn').addEventListener('click', testSftpConnection);
             document.getElementById('refreshClipsBtn').addEventListener('click', fetchClips);
             document.getElementById('applyFilterBtn').addEventListener('click', applyFilters);
+            document.getElementById('save-edit-btn').addEventListener('click', saveClipEdits);
+            
+            // Event delegation for edit buttons that are dynamically added
+            document.addEventListener('click', function(e) {
+                if (e.target && e.target.classList.contains('edit-clip-btn')) {
+                    const path = e.target.getAttribute('data-path');
+                    const title = e.target.getAttribute('data-title');
+                    const category = e.target.getAttribute('data-category');
+                    openEditModal(path, title, category);
+                }
+            });
             
             document.getElementById('resetFilterBtn').addEventListener('click', () => {
                 document.getElementById('filter_category').value = '';
@@ -1431,7 +1464,7 @@
             description += `Date: ${clip.timestamp.toLocaleDateString()}`;
             
             document.getElementById('yt-description').value = description;
-            document.getElementById('yt-privacy').value = 'unlisted';
+            document.getElementById('yt-privacy').value = 'private';
             document.getElementById('yt-upload-status').innerText = '';
             document.getElementById('youtube-upload-modal').style.display = 'flex';
         }
@@ -1498,7 +1531,7 @@
                     document.getElementById('yt-upload-status').innerText = 'Upload complete!';
                     setTimeout(() => {
                         closeYouTubeModal();
-                        alert(`Video uploaded to YouTube!\n\nWatch at: https://youtu.be/${videoId}`);
+                        alert(`Video uploaded to YouTube!`);
                     }, 2000);
                 } else {
                     const err = await uploadRes.json();
@@ -1518,6 +1551,99 @@
             document.getElementById('signOutYouTube').addEventListener('click', signOutYouTube);
             document.getElementById('yt-upload-btn').addEventListener('click', uploadClipToYouTube);
         });
+
+        // Edit clip functionality
+        let currentEditClip = null;
+        
+        function openEditModal(path, title, category) {
+            currentEditClip = { path, title, category };
+            document.getElementById('edit-title').value = title || '';
+            document.getElementById('edit-category').value = category || '';
+            document.getElementById('edit-status').innerText = '';
+            document.getElementById('edit-clip-modal').style.display = 'flex';
+        }
+        
+        function closeEditModal() {
+            document.getElementById('edit-clip-modal').style.display = 'none';
+            currentEditClip = null;
+        }
+        
+        async function saveClipEdits() {
+            if (!currentEditClip || !sftpSettings) return;
+            
+            const newTitle = document.getElementById('edit-title').value.trim();
+            const newCategory = document.getElementById('edit-category').value.trim();
+            const statusEl = document.getElementById('edit-status');
+            
+            statusEl.innerText = 'Saving changes...';
+            
+            try {
+                // Get the clip's full details to preserve other metadata
+                const clip = allClips.find(c => c.path === currentEditClip.path);
+                if (!clip) {
+                    throw new Error('Clip not found');
+                }
+                
+                const response = await fetch('/api/clips/edit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ...sftpSettings,
+                        path: currentEditClip.path,
+                        title: newTitle,
+                        category: newCategory
+                    })
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`Failed to save changes: ${errorText}`);
+                }
+                
+                const result = await response.json();
+                
+                // Update local data with the new name and refresh the UI
+                if (result.success) {
+                    statusEl.innerText = 'Saved successfully!';
+                    
+                    // Update in our local array
+                    const updatedClip = allClips.find(c => c.path === currentEditClip.path);
+                    if (updatedClip) {
+                        updatedClip.title = newTitle;
+                        updatedClip.category = newCategory;
+                        if (result.new_path && result.new_path !== currentEditClip.path) {
+                            updatedClip.path = result.new_path;
+                            updatedClip.name = result.new_name;
+                        }
+                    }
+                    
+                    // Update filtered array too
+                    const updatedFilteredClip = filteredClips.find(c => c.path === currentEditClip.path);
+                    if (updatedFilteredClip) {
+                        updatedFilteredClip.title = newTitle;
+                        updatedFilteredClip.category = newCategory;
+                        if (result.new_path && result.new_path !== currentEditClip.path) {
+                            updatedFilteredClip.path = result.new_path;
+                            updatedFilteredClip.name = result.new_name;
+                        }
+                    }
+                    
+                    // Re-render the UI
+                    renderClips();
+                    
+                    // Close the modal after a short delay
+                    setTimeout(() => {
+                        closeEditModal();
+                    }, 1500);
+                } else {
+                    throw new Error(result.message || 'Unknown error occurred');
+                }
+            } catch (error) {
+                statusEl.style.color = 'red';
+                statusEl.innerText = `Error: ${error.message}`;
+                console.error('Edit clip error:', error);
+            }
+        }
     </script>
     
     <!-- YouTube Upload Modal -->
@@ -1539,6 +1665,22 @@
                 <button onclick="closeYouTubeModal()">Cancel</button>
             </div>
             <div id="yt-upload-status" style="margin-top: 1rem; color: limegreen;"></div>
+        </div>
+    </div>
+    
+    <!-- Edit Clip Modal -->
+    <div id="edit-clip-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <h3>Edit Clip Details</h3>
+            <label for="edit-title">Title:</label>
+            <input type="text" id="edit-title" />
+            <label for="edit-category">Category:</label>
+            <input type="text" id="edit-category" />
+            <div style="margin-top: 1rem;">
+                <button id="save-edit-btn">Save Changes</button>
+                <button onclick="closeEditModal()">Cancel</button>
+            </div>
+            <div id="edit-status" style="margin-top: 1rem; color: limegreen;"></div>
         </div>
     </div>
 </body>

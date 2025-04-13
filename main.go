@@ -86,6 +86,7 @@ type ClipRequest struct {
 	DurationSeconds   int    `json:"duration_seconds"`
 	ChatApps          string `json:"chat_app"` 
 	Category          string `json:"category"`
+	Title             string `json:"title"`
 	Team1             string `json:"team1"`          
 	Team2             string `json:"team2"`          
 	AdditionalText    string `json:"additional_text"`
@@ -1304,15 +1305,17 @@ func (cm *ClipManager) sendToSFTP(filePath, host, port, user, password, remotePa
 
 // generateSFTPFilename creates a filename based on request parameters
 func (cm *ClipManager) generateSFTPFilename(r *http.Request) string {
-    var category, team1, team2 string
+    var title, category, team1, team2 string
 
     if r.Method == http.MethodGet {
+        title = r.URL.Query().Get("title")
         category = r.URL.Query().Get("category")
         team1 = r.URL.Query().Get("team1")
         team2 = r.URL.Query().Get("team2")
     } else if r.Method == http.MethodPost {
         var req ClipRequest
         if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+            title = req.Title
             category = req.Category
             team1 = req.Team1
             team2 = req.Team2
@@ -1326,14 +1329,26 @@ func (cm *ClipManager) generateSFTPFilename(r *http.Request) string {
         return reg.ReplaceAllString(strings.TrimSpace(s), "_")
     }
 
+    title = sanitize(title)
     category = sanitize(category)
     team1 = sanitize(team1)
     team2 = sanitize(team2)
+    
+    // Use category as fallback for title if title is empty
+    if title == "" {
+        title = category
+    }
 
     timestamp := time.Now().Format("2006-01-02_15-04")
     var parts []string
-
-    if category != "" {
+    
+    // Add title to parts if it exists
+    if title != "" {
+        parts = append(parts, title)
+    }
+    
+    // Add category to parts if it exists and is different from title
+    if category != "" && category != title {
         parts = append(parts, category)
     }
 
@@ -1449,9 +1464,10 @@ func (cm *ClipManager) SendToChatApp(originalFilePath string, r *http.Request) e
 }
 
 func (cm *ClipManager) buildClipMessage(r *http.Request) string {
-    var category, team1, team2, additionalText string
+    var title, category, team1, team2, additionalText string
 
     if r.Method == http.MethodGet {
+        title = r.URL.Query().Get("title")
         category = r.URL.Query().Get("category")
         team1 = r.URL.Query().Get("team1")
         team2 = r.URL.Query().Get("team2")
@@ -1460,6 +1476,7 @@ func (cm *ClipManager) buildClipMessage(r *http.Request) string {
         // For POST requests we need to parse the body again if we're not using a ClipRequest
         var req ClipRequest
         if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+            title = req.Title
             category = req.Category
             team1 = req.Team1
             team2 = req.Team2
@@ -1468,14 +1485,36 @@ func (cm *ClipManager) buildClipMessage(r *http.Request) string {
         // Reset de body zodat deze opnieuw gelezen kan worden elders
         r.Body = io.NopCloser(bytes.NewBuffer([]byte{}))
     }
+    
+    // Build message components
+    var messageParts []string
+    
+    // Add title if available
+    if title != "" {
+        messageParts = append(messageParts, title)
+    }
+    
+    // Add category if available and different from title
+    if category != "" && category != title {
+        messageParts = append(messageParts, category)
+    }
+    
+    // Join title and category with " - " if both exist
+    messagePrefix := ""
+    if len(messageParts) > 0 {
+        messagePrefix = strings.Join(messageParts, " - ") + " "
+    }
+    
+    // Create the base message with prefix and timestamp
+    base := fmt.Sprintf("New %sClip: %s", messagePrefix, cm.formatCurrentTime())
 
-    base := fmt.Sprintf("New %sClip: %s", optionalCategory(category), cm.formatCurrentTime())
-
+    // Add team information if available
     var teams string
     if team1 != "" && team2 != "" {
         teams = fmt.Sprintf(" / %s vs %s", team1, team2)
     }
 
+    // Add additional text if available
     var extra string
     if additionalText != "" {
         extra = fmt.Sprintf(" - %s", additionalText)
@@ -1502,7 +1541,7 @@ func (cm *ClipManager) serveWebInterface(w http.ResponseWriter, r *http.Request)
 	templatePath := "templates/index.html"
 
 	_, err := os.Stat(templatePath)
-	if err != nil {
+	if (err != nil) {
 		execPath, err := os.Executable()
 		if err == nil {
 			execDir := filepath.Dir(execPath)
@@ -1511,7 +1550,7 @@ func (cm *ClipManager) serveWebInterface(w http.ResponseWriter, r *http.Request)
 		}
 
 	htmlContent, err := os.ReadFile(templatePath)
-	if err != nil {
+	if (err != nil) {
 		cm.log.Warning("Error reading template file: %v, using embedded HTML", err)
 		htmlContent = []byte(getEmbeddedHTML())
 	}
@@ -1858,6 +1897,159 @@ func (cm *ClipManager) broadcastNewClip(clipPath string) {
     }
 }
 
+// HandleEditClip updates a clip's metadata by renaming the file
+func (cm *ClipManager) HandleEditClip(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        http.Error(w, "Method not allowed, use POST", http.StatusMethodNotAllowed)
+        return
+    }
+
+    var req struct {
+        SFTPHost     string `json:"sftp_host"`
+        SFTPPort     string `json:"sftp_port"`
+        SFTPUser     string `json:"sftp_user"`
+        SFTPPassword string `json:"sftp_password"`
+        Path         string `json:"path"`
+        Title        string `json:"title"`
+        Category     string `json:"category"`
+    }
+
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request body", http.StatusBadRequest)
+        cm.log.Error("Failed to parse edit request: %v", err)
+        return
+    }
+
+    client, err := cm.connectToSFTP(req.SFTPHost, req.SFTPPort, req.SFTPUser, req.SFTPPassword)
+    if err != nil {
+        http.Error(w, fmt.Sprintf("Failed to connect to SFTP: %v", err), http.StatusInternalServerError)
+        return
+    }
+    defer client.Close()
+
+    // Get the original filename to parse the timestamp and other metadata
+    oldName := filepath.Base(req.Path)
+    oldDir := filepath.Dir(req.Path)
+    
+    // Extract the timestamp part using regex
+    re := regexp.MustCompile(`(\d{4}-\d{2}-\d{2}_\d{2}-\d{2})\.mp4$`)
+    matches := re.FindStringSubmatch(oldName)
+    if len(matches) < 2 {
+        http.Error(w, "Failed to parse timestamp from filename", http.StatusBadRequest)
+        return
+    }
+    timestamp := matches[1]
+    
+    // Parse original filename to get team information
+    fileInfo := parseFileName(oldName)
+    
+    // Sanitize inputs
+    sanitize := func(s string) string {
+        reg, _ := regexp.Compile("[^a-zA-Z0-9_-]+")
+        return reg.ReplaceAllString(strings.TrimSpace(s), "_")
+    }
+    
+    title := sanitize(req.Title)
+    category := sanitize(req.Category)
+    
+    // Create new filename
+    var parts []string
+    
+    // Add title if it exists
+    if title != "" {
+        parts = append(parts, title)
+    }
+    
+    // Add category if it exists and is different from title
+    if category != "" && category != title {
+        parts = append(parts, category)
+    }
+    
+    // Add team information if available
+    if fileInfo.Team1 != "" && fileInfo.Team2 != "" {
+        parts = append(parts, fmt.Sprintf("%s_vs_%s", fileInfo.Team1, fileInfo.Team2))
+    } else if fileInfo.Team1 != "" {
+        parts = append(parts, fileInfo.Team1)
+    } else if fileInfo.Team2 != "" {
+        parts = append(parts, fileInfo.Team2)
+    }
+    
+    // Add timestamp
+    newFilename := fmt.Sprintf("%s_%s.mp4", strings.Join(parts, "_"), timestamp)
+    newPath := filepath.Join(oldDir, newFilename)
+    
+    // Rename the file
+    err = client.Rename(req.Path, newPath)
+    if err != nil {
+        http.Error(w, fmt.Sprintf("Failed to rename file: %v", err), http.StatusInternalServerError)
+        cm.log.Error("Failed to rename file from %s to %s: %v", req.Path, newPath, err)
+        return
+    }
+    
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true, 
+        "message": "File updated successfully",
+        "new_path": newPath,
+        "new_name": newFilename,
+    })
+}
+
+// FileInfo represents parsed information from a filename
+type FileInfo struct {
+    Title    string
+    Category string
+    Team1    string
+    Team2    string
+}
+
+// parseFileName extracts metadata from a filename
+func parseFileName(filename string) FileInfo {
+    // Remove .mp4 extension and split by underscore
+    parts := strings.Split(strings.TrimSuffix(filename, ".mp4"), "_")
+    
+    // Find date part (format: YYYY-MM-DD)
+    dateIndex := -1
+    for i, part := range parts {
+        if regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`).MatchString(part) {
+            dateIndex = i
+            break
+        }
+    }
+    
+    if dateIndex == -1 {
+        return FileInfo{}
+    }
+    
+    var info FileInfo
+    
+    if dateIndex > 0 {
+        // First part is the title in the new format
+        info.Title = parts[0]
+        
+        // If we have at least 3 parts before the date (title, category, and something else)
+        if dateIndex > 1 {
+            // Second part is the category
+            info.Category = parts[1]
+            
+            // Check for team vs team format in the remaining parts
+            remainingParts := strings.Join(parts[2:dateIndex], "_")
+            teamMatch := regexp.MustCompile(`(.+)_vs_(.+)`).FindStringSubmatch(remainingParts)
+            
+            if len(teamMatch) > 2 {
+                info.Team1 = teamMatch[1]
+                info.Team2 = teamMatch[2]
+            } else if dateIndex > 2 {
+                // If no vs pattern but there are parts between category and date,
+                // assume it's just team1
+                info.Team1 = remainingParts
+            }
+        }
+    }
+    
+    return info
+}
+
 func main() {
 	log.Println("Starting ClipManager...")
 
@@ -1892,6 +2084,7 @@ func main() {
 	http.HandleFunc("/api/clips", clipManager.RateLimit(clipManager.HandleListClips))
 	http.HandleFunc("/api/clips/test", clipManager.RateLimit(clipManager.HandleTestSFTPConnection))
 	http.HandleFunc("/api/clips/delete", clipManager.RateLimit(clipManager.HandleDeleteClip))
+	http.HandleFunc("/api/clips/edit", clipManager.RateLimit(clipManager.HandleEditClip))
 	http.HandleFunc("/api/clip/stream", clipManager.RateLimit(clipManager.HandleStreamClip))
 	http.HandleFunc("/ws", clipManager.HandleWebSocket)
 	http.HandleFunc("/", clipManager.serveWebInterface)

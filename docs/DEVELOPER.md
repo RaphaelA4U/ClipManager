@@ -136,10 +136,15 @@ ClipManager uses WebSockets to notify clients about newly uploaded clips:
 ### SFTP File Naming
 
 The `generateSFTPFilename` function creates filenames based on request parameters:
-- Uses category, team1, and team2 if provided
+- Uses title as the primary identifier (falls back to category if title is empty)
 - Sanitizes inputs to remove invalid characters
 - Formats with timestamp (YYYY-MM-DD_HH-MM)
-- Creates meaningful formatted filenames based on available parameters
+- Creates meaningful formatted filenames based on available parameters:
+  - With title only: `title_timestamp.mp4`
+  - With title and category: `title_category_timestamp.mp4` 
+  - With title, category, teams: `title_category_team1_vs_team2_timestamp.mp4`
+
+The title field is optional, and if not provided, the function falls back to using category as the title.
 
 ## Optional Button Integration
 ClipManager supports an optional button integration using an Arduino and a PowerShell script on a Windows PC to trigger clip recordings with a physical button. For details on implementation and setup, see [ARDUINO_BUTTON.md](ARDUINO_BUTTON.md).
