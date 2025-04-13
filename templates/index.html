@@ -194,6 +194,10 @@
                     </div>
                     <div class="filter-group">
                         <div class="form-group">
+                            <label>Title:</label>
+                            <input type="text" id="filter_title" placeholder="Filter by title">
+                        </div>
+                        <div class="form-group">
                             <label>Category:</label>
                             <input type="text" id="filter_category" placeholder="E.g. highlight">
                         </div>
@@ -843,22 +847,44 @@
         }
 
         function applyFilters() {
+            const titleFilter = document.getElementById('filter_title').value.toLowerCase();
             const categoryFilter = document.getElementById('filter_category').value.toLowerCase();
             const teamFilter = document.getElementById('filter_team').value.toLowerCase();
             const startDateFilter = document.getElementById('filter_start_date').value;
             const endDateFilter = document.getElementById('filter_end_date').value;
             
             filteredClips = allClips.filter(clip => {
-                // Category filter
-                if (categoryFilter && !clip.category.toLowerCase().includes(categoryFilter)) {
+                // Title filter - less strict matching
+                if (titleFilter && !(
+                    clip.title.toLowerCase().includes(titleFilter) || 
+                    titleFilter.split(' ').some(word => 
+                        word.length > 2 && clip.title.toLowerCase().includes(word.toLowerCase())
+                    )
+                )) {
                     return false;
                 }
                 
-                // Team filter
-                if (teamFilter && 
-                    !clip.team1.toLowerCase().includes(teamFilter) && 
-                    !clip.team2.toLowerCase().includes(teamFilter)) {
+                // Category filter - less strict matching
+                if (categoryFilter && !(
+                    clip.category.toLowerCase().includes(categoryFilter) || 
+                    categoryFilter.split(' ').some(word => 
+                        word.length > 2 && clip.category.toLowerCase().includes(word.toLowerCase())
+                    )
+                )) {
                     return false;
+                }
+                
+                // Team filter - less strict matching for both teams
+                if (teamFilter) {
+                    const teamWords = teamFilter.split(' ').filter(word => word.length > 2);
+                    const team1Matches = teamWords.some(word => clip.team1.toLowerCase().includes(word));
+                    const team2Matches = teamWords.some(word => clip.team2.toLowerCase().includes(word));
+                    
+                    if (!(clip.team1.toLowerCase().includes(teamFilter) || 
+                          clip.team2.toLowerCase().includes(teamFilter) ||
+                          team1Matches || team2Matches)) {
+                        return false;
+                    }
                 }
                 
                 // Date filters
@@ -1217,6 +1243,7 @@
             });
             
             document.getElementById('resetFilterBtn').addEventListener('click', () => {
+                document.getElementById('filter_title').value = '';
                 document.getElementById('filter_category').value = '';
                 document.getElementById('filter_team').value = '';
                 document.getElementById('filter_start_date').value = '';
