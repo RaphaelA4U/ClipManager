@@ -959,11 +959,11 @@
                     
                     const token = localStorage.getItem('yt_access_token');
                     if (!token) {
-                        if (confirm('Je moet eerst je YouTube-account koppelen. Wil je dat nu doen?')) {
+                        if (confirm('You need to connect your YouTube account first. Do you want to do that now?')) {
                             signInYouTube().then(() => {
                                 openYouTubeUploadModal(clip);
                             }).catch(err => {
-                                alert('YouTube inloggen mislukt: ' + (err.error || err.message || 'Onbekende fout'));
+                                alert('YouTube sign-in failed: ' + (err.error || err.message || 'Unknown error'));
                             });
                         }
                         return;
@@ -1301,11 +1301,11 @@
                         const user = auth.currentUser.get();
                         const token = user.getAuthResponse().access_token;
                         localStorage.setItem('yt_access_token', token);
-                        document.getElementById('ytStatus').innerText = `✅ Ingelogd als ${user.getBasicProfile().getEmail()}`;
+                        document.getElementById('ytStatus').innerText = `Signed in as ${user.getBasicProfile().getEmail()}`;
                         document.getElementById('signInYouTube').style.display = 'none';
                         document.getElementById('signOutYouTube').style.display = 'block';
                     } else {
-                        document.getElementById('ytStatus').innerText = `❌ Niet ingelogd`;
+                        document.getElementById('ytStatus').innerText = `Not signed in`;
                         document.getElementById('signInYouTube').style.display = 'block';
                         document.getElementById('signOutYouTube').style.display = 'none';
                     }
@@ -1317,7 +1317,7 @@
             gapi.auth2.getAuthInstance().signIn().then(user => {
                 const token = user.getAuthResponse().access_token;
                 localStorage.setItem('yt_access_token', token);
-                document.getElementById('ytStatus').innerText = `✅ Ingelogd als ${user.getBasicProfile().getEmail()}`;
+                document.getElementById('ytStatus').innerText = `Signed in as ${user.getBasicProfile().getEmail()}`;
                 document.getElementById('signInYouTube').style.display = 'none';
                 document.getElementById('signOutYouTube').style.display = 'block';
             });
@@ -1326,7 +1326,7 @@
         function signOutYouTube() {
             gapi.auth2.getAuthInstance().signOut().then(() => {
                 localStorage.removeItem('yt_access_token');
-                document.getElementById('ytStatus').innerText = '❌ Niet ingelogd';
+                document.getElementById('ytStatus').innerText = 'Not signed in';
                 document.getElementById('signInYouTube').style.display = 'block';
                 document.getElementById('signOutYouTube').style.display = 'none';
             });
@@ -1362,7 +1362,7 @@
             const description = document.getElementById('yt-description').value;
             const privacy = document.getElementById('yt-privacy').value;
             
-            document.getElementById('yt-upload-status').innerText = 'Video wordt opgehaald...';
+            document.getElementById('yt-upload-status').innerText = 'Fetching video...';
             
             try {
                 // Fetch file from backend
@@ -1377,7 +1377,7 @@
                 const fileResponse = await fetch(`/api/clip/stream?${params}`);
                 const blob = await fileResponse.blob();
                 
-                document.getElementById('yt-upload-status').innerText = 'Upload voorbereiden...';
+                document.getElementById('yt-upload-status').innerText = 'Preparing upload...';
                 
                 const initRes = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
                     method: 'POST',
@@ -1394,10 +1394,10 @@
                 });
                 
                 if (!initRes.ok) {
-                    throw new Error('YouTube initialisatie mislukt.');
+                    throw new Error('YouTube initialization failed.');
                 }
                 
-                document.getElementById('yt-upload-status').innerText = 'Bezig met uploaden...';
+                document.getElementById('yt-upload-status').innerText = 'Uploading...';
                 
                 const uploadUrl = initRes.headers.get('Location');
                 const uploadRes = await fetch(uploadUrl, {
@@ -1409,17 +1409,17 @@
                 if (uploadRes.ok) {
                     const data = await uploadRes.json();
                     const videoId = data.id;
-                    document.getElementById('yt-upload-status').innerText = '✅ Upload voltooid!';
+                    document.getElementById('yt-upload-status').innerText = 'Upload complete!';
                     setTimeout(() => {
                         closeYouTubeModal();
-                        alert(`✅ Video geüpload naar YouTube!\n\nBekijk op: https://youtu.be/${videoId}`);
+                        alert(`Video uploaded to YouTube!\n\nWatch at: https://youtu.be/${videoId}`);
                     }, 2000);
                 } else {
                     const err = await uploadRes.json();
-                    throw new Error('Fout tijdens upload: ' + (err.error && err.error.message ? err.error.message : 'onbekend'));
+                    throw new Error('Upload error: ' + (err.error && err.error.message ? err.error.message : 'unknown'));
                 }
             } catch (error) {
-                document.getElementById('yt-upload-status').innerText = `❌ Error: ${error.message}`;
+                document.getElementById('yt-upload-status').innerText = `Error: ${error.message}`;
                 console.error('YouTube upload failed:', error);
             }
         }
@@ -1437,10 +1437,10 @@
     <!-- YouTube Upload Modal -->
     <div id="youtube-upload-modal" class="modal" style="display:none;">
         <div class="modal-content">
-            <h3>Upload naar YouTube</h3>
-            <label for="yt-title">Titel:</label>
+            <h3>Upload to YouTube</h3>
+            <label for="yt-title">Title:</label>
             <input type="text" id="yt-title" />
-            <label for="yt-description">Beschrijving:</label>
+            <label for="yt-description">Description:</label>
             <textarea id="yt-description" rows="3"></textarea>
             <label for="yt-privacy">Privacy:</label>
             <select id="yt-privacy">
@@ -1450,7 +1450,7 @@
             </select>
             <div style="margin-top: 1rem;">
                 <button id="yt-upload-btn">Upload</button>
-                <button onclick="closeYouTubeModal()">Annuleren</button>
+                <button onclick="closeYouTubeModal()">Cancel</button>
             </div>
             <div id="yt-upload-status" style="margin-top: 1rem; color: limegreen;"></div>
         </div>

@@ -481,7 +481,7 @@ func (cm *ClipManager) StartBackgroundRecording() {
                     matches := segmentRegex.FindStringSubmatch(line)
                     if len(matches) > 1 {
                         segmentFile := matches[1]
-                        creationTime := time.Now() // Tijd waarop FFmpeg het segment aanmaakt
+                        creationTime := time.Now() // Time when FFmpeg creates the segment
                         cm.log.Success("New segment created: %s at %s", segmentFile, creationTime.Format("15:04:05"))
                         cm.addSegment(segmentFile, creationTime)
                     }
@@ -533,7 +533,7 @@ func (cm *ClipManager) addSegment(segmentPath string, creationTime time.Time) {
 
     absolutePath := filepath.Join(cm.tempDir, segmentPath)
 
-    // Parse segment nummer voor logging
+    // Parse segment number for logging
     filenameRegex := regexp.MustCompile(`segment_cycle(\d+)_(\d+)\.ts$`)
     matches := filenameRegex.FindStringSubmatch(segmentPath)
     segmentNum := 0
@@ -1457,7 +1457,7 @@ func (cm *ClipManager) buildClipMessage(r *http.Request) string {
         team2 = r.URL.Query().Get("team2")
         additionalText = r.URL.Query().Get("additional_text")
     } else if r.Method == http.MethodPost {
-        // Voor POST moeten we de body opnieuw parsen als we geen ClipRequest gebruiken
+        // For POST requests we need to parse the body again if we're not using a ClipRequest
         var req ClipRequest
         if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
             category = req.Category
