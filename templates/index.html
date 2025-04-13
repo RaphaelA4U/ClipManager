@@ -7,7 +7,8 @@
     <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="icon" href="/static/img/favicon.ico" type="image/x-icon">
     <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
-    <script src="https://apis.google.com/js/api.js"></script>
+    <!-- Replace the old Google API script with the new Google Identity Services library -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
     <div class="container">
@@ -1289,47 +1290,132 @@
         // YouTube Auth + Upload JS
         const YT_CLIENT_ID = '177621281701-i482ftiuvtg25u0pi76v90o9ji9t133d.apps.googleusercontent.com';
         let currentClip = null;
+        let tokenClient = null;
         
         function initYouTubeAuth() {
-            gapi.load('client:auth2', () => {
-                gapi.auth2.init({
-                    client_id: YT_CLIENT_ID,
-                    scope: 'https://www.googleapis.com/auth/youtube.upload'
-                }).then(() => {
-                    const auth = gapi.auth2.getAuthInstance();
-                    if (auth.isSignedIn.get()) {
-                        const user = auth.currentUser.get();
-                        const token = user.getAuthResponse().access_token;
-                        localStorage.setItem('yt_access_token', token);
-                        document.getElementById('ytStatus').innerText = `Signed in as ${user.getBasicProfile().getEmail()}`;
-                        document.getElementById('signInYouTube').style.display = 'none';
-                        document.getElementById('signOutYouTube').style.display = 'block';
+            // Initialize the token client for OAuth 2.0 implicit flow
+            tokenClient = google.accounts.oauth2.initTokenClient({
+                client_id: YT_CLIENT_ID,
+                scope: 'https://www.googleapis.com/auth/youtube.upload',
+                callback: (tokenResponse) => {
+                    if (tokenResponse && tokenResponse.access_token) {
+                        // Store the access token
+                        const accessToken = tokenResponse.access_token;
+                        localStorage.setItem('yt_access_token', accessToken);
+                        
+                        // Fetch user info from YouTube API
+                        fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+                            headers: { 'Authorization': `Bearer ${accessToken}` }
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            let channelName = 'YouTube Account';
+                            if (data.items && data.items.length > 0) {
+                                channelName = data.items[0].snippet.title;
+                            }
+                            
+                            // Update UI
+                            document.getElementById('ytStatus').innerText = `Signed in as: ${channelName}`;
+                            document.getElementById('signInYouTube').style.display = 'none';
+                            document.getElementById('signOutYouTube').style.display = 'block';
+                            
+                            // If there's a pending upload, continue with it
+                            if (currentClip) {
+                                openYouTubeUploadModal(currentClip);
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error fetching channel info:', error);
+                            document.getElementById('ytStatus').innerText = 'Signed in (channel info unavailable)';
+                            document.getElementById('signInYouTube').style.display = 'none';
+                            document.getElementById('signOutYouTube').style.display = 'block';
+                        });
                     } else {
-                        document.getElementById('ytStatus').innerText = `Not signed in`;
-                        document.getElementById('signInYouTube').style.display = 'block';
-                        document.getElementById('signOutYouTube').style.display = 'none';
+                        console.error('No access token received');
+                        document.getElementById('ytStatus').innerText = 'Authentication failed';
                     }
-                });
+                },
+                error_callback: (error) => {
+                    console.error('GIS Auth Error:', error);
+                    document.getElementById('ytStatus').innerText = `Error: ${error.type || 'Authentication failed'}`;
+                }
             });
+
+            // Check if we have a token in localStorage and verify it
+            const storedToken = localStorage.getItem('yt_access_token');
+            if (storedToken) {
+                verifyToken(storedToken);
+            } else {
+                document.getElementById('ytStatus').innerText = 'Not signed in';
+                document.getElementById('signInYouTube').style.display = 'block';
+                document.getElementById('signOutYouTube').style.display = 'none';
+            }
         }
         
-        function signInYouTube() {
-            gapi.auth2.getAuthInstance().signIn().then(user => {
-                const token = user.getAuthResponse().access_token;
-                localStorage.setItem('yt_access_token', token);
-                document.getElementById('ytStatus').innerText = `Signed in as ${user.getBasicProfile().getEmail()}`;
+        function verifyToken(token) {
+            // Attempt to get channel info to verify token validity
+            fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Token invalid or expired');
+                }
+                return response.json();
+            })
+            .then(data => {
+                let channelName = 'YouTube Account';
+                if (data.items && data.items.length > 0) {
+                    channelName = data.items[0].snippet.title;
+                }
+                
+                document.getElementById('ytStatus').innerText = `Signed in as: ${channelName}`;
                 document.getElementById('signInYouTube').style.display = 'none';
                 document.getElementById('signOutYouTube').style.display = 'block';
-            });
-        }
-        
-        function signOutYouTube() {
-            gapi.auth2.getAuthInstance().signOut().then(() => {
+            })
+            .catch(error => {
+                console.error('Token verification failed:', error);
                 localStorage.removeItem('yt_access_token');
                 document.getElementById('ytStatus').innerText = 'Not signed in';
                 document.getElementById('signInYouTube').style.display = 'block';
                 document.getElementById('signOutYouTube').style.display = 'none';
             });
+        }
+        
+        function signInYouTube() {
+            return new Promise((resolve, reject) => {
+                if (!tokenClient) {
+                    reject(new Error('Google Identity Services not initialized'));
+                    return;
+                }
+
+                // Store a reference to the resolve/reject functions for later
+                tokenClient._resolve = resolve;
+                tokenClient._reject = reject;
+                
+                // Request an access token, trigger the OAuth flow
+                tokenClient.requestAccessToken({
+                    prompt: 'consent',  // Always ask for consent to allow account switching
+                });
+            });
+        }
+        
+        function signOutYouTube() {
+            const token = localStorage.getItem('yt_access_token');
+            if (token) {
+                // Revoke the token
+                google.accounts.oauth2.revoke(token, () => {
+                    localStorage.removeItem('yt_access_token');
+                    document.getElementById('ytStatus').innerText = 'Not signed in';
+                    document.getElementById('signInYouTube').style.display = 'block';
+                    document.getElementById('signOutYouTube').style.display = 'none';
+                    console.log('YouTube token revoked and removed');
+                });
+            } else {
+                document.getElementById('ytStatus').innerText = 'Not signed in';
+                document.getElementById('signInYouTube').style.display = 'block';
+                document.getElementById('signOutYouTube').style.display = 'none';
+            }
         }
         
         function openYouTubeUploadModal(clip) {
