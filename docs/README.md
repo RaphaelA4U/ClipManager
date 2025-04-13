@@ -18,7 +18,7 @@ ClipManager is a simple, fast, and lightweight tool to record clips from an RTSP
 - **Clip Management**: Browse, play, download, and delete clips from the web interface.
 - **Real-time Updates**: WebSocket notifications when new clips are created.
 - **Integration Options**: Embed in your applications via API or custom buttons.
-- **✨ YouTube Upload**: Upload clips directly to your YouTube channel with customizable titles, descriptions, and privacy settings.
+- **YouTube Upload**: Upload clips directly to your YouTube channel with customizable titles, descriptions, and privacy settings.
 
 ## Requirements
 

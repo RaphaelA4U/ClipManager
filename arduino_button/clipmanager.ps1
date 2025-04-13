@@ -35,7 +35,7 @@ function Play-SoundBasedOnIdentifier {
         Start-Sleep -Milliseconds 100
         #Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
     } catch {
-        Write-Host "Fout bij het afspelen van geluid: $_"
+        Write-Host "Error playing sound: $_"
     }
 }
 
@@ -147,10 +147,10 @@ start "" /min powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -File "
 $useSystemWeb = $true
 try {
     Add-Type -AssemblyName System.Web
-    Write-Host "System.Web geladen"
+    Write-Host "System.Web loaded"
 } catch {
-    Write-Host "Fout bij het laden van System.Web: $_"
-    Write-Host "Gebruik fallback voor URL-codering."
+    Write-Host "Error loading System.Web: $_"
+    Write-Host "Using fallback for URL encoding."
     $useSystemWeb = $false
 }
 
@@ -165,59 +165,59 @@ function Get-Config {
     if (Test-Path $configPath) {
         try {
             $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
-            Write-Host "Configuratie geladen uit config.json"
+            Write-Host "Configuration loaded from config.json"
         } catch {
-            Write-Host "Fout bij het lezen van config.json: $_"
-            Write-Host "Druk op een toets om af te sluiten..."
+            Write-Host "Error reading config.json: $_"
+            Write-Host "Press a key to exit..."
             $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             exit 1
         }
     } else {
-        Write-Host "Fout: config.json niet gevonden in $installDir."
-        Write-Host "Druk op een toets om af te sluiten..."
+        Write-Host "Error: config.json not found in $installDir."
+        Write-Host "Press a key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
 
     # 2. Validate the configuration
     if (-not $config) {
-        Write-Host "Fout: config.json kon niet worden geladen."
-        Write-Host "   1. Zorg ervoor dat config.json bestaat in de ClipManager map ($installDir)."
-        Write-Host "   2. Controleer of het bestand geldige JSON bevat."
-        Write-Host "Druk op een toets om af te sluiten..."
+        Write-Host "Error: config.json could not be loaded."
+        Write-Host "   1. Ensure that config.json exists in the ClipManager folder ($installDir)."
+        Write-Host "   2. Check if the file contains valid JSON."
+        Write-Host "Press a key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
 
     # Validate ServerUrl
     if (-not $config.ServerUrl -or $config.ServerUrl -eq "") {
-        Write-Host "Fout: ServerUrl is niet ingesteld in config.json."
-        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-        Write-Host "   2. Stel de ServerUrl in, bijvoorbeeld: {`"ServerUrl`": `"http://jouw-server:5001`"}"
-        Write-Host "   3. Sla het bestand op en herstart dit script."
-        Write-Host "Druk op een toets om af te sluiten..."
+        Write-Host "Error: ServerUrl is not set in config.json."
+        Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+        Write-Host "   2. Set the ServerUrl, for example: {`"ServerUrl`": `"http://your-server:5001`"}"
+        Write-Host "   3. Save the file and restart this script."
+        Write-Host "Press a key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
 
     # Validate ChatApp (only after setup is complete)
     if (-not $firstRun -and (-not $config.ChatApp -or $config.ChatApp -eq "")) {
-        Write-Host "Fout: ChatApp is niet ingesteld in config.json."
-        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-        Write-Host "   2. Stel de ChatApp in, bijvoorbeeld: {`"ChatApp`": `"mattermost`"}"
-        Write-Host "   3. Sla het bestand op en herstart dit script."
-        Write-Host "Druk op een toets om af te sluiten..."
+        Write-Host "Error: ChatApp is not set in config.json."
+        Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+        Write-Host "   2. Set the ChatApp, for example: {`"ChatApp`": `"mattermost`"}"
+        Write-Host "   3. Save the file and restart this script."
+        Write-Host "Press a key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
 
     # Validate ChatAppConfig
     if (-not $config.ChatAppConfig) {
-        Write-Host "Fout: ChatAppConfig is niet ingesteld in config.json."
-        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-        Write-Host "   2. Voeg een ChatAppConfig object toe met de juiste parameters voor jouw chatplatform."
-        Write-Host "   3. Sla het bestand op en herstart dit script."
-        Write-Host "Druk op een toets om af te sluiten..."
+        Write-Host "Error: ChatAppConfig is not set in config.json."
+        Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+        Write-Host "   2. Add a ChatAppConfig object with the appropriate parameters for your chat platform."
+        Write-Host "   3. Save the file and restart this script."
+        Write-Host "Press a key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
@@ -229,16 +229,16 @@ function Get-Config {
                 if (-not $config.ChatAppConfig.mattermost_url -or $config.ChatAppConfig.mattermost_url -eq "" -or
                     -not $config.ChatAppConfig.mattermost_channel -or $config.ChatAppConfig.mattermost_channel -eq "" -or
                     -not $config.ChatAppConfig.mattermost_token -or $config.ChatAppConfig.mattermost_token -eq "") {
-                    Write-Host "Fout: Mattermost parameters (mattermost_url, mattermost_channel, mattermost_token) zijn niet volledig ingesteld in config.json."
-                    Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                    Write-Host "   2. Stel de Mattermost parameters in onder ChatAppConfig, bijvoorbeeld:"
+                    Write-Host "Error: Mattermost parameters (mattermost_url, mattermost_channel, mattermost_token) are not fully set in config.json."
+                    Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+                    Write-Host "   2. Set the Mattermost parameters under ChatAppConfig, for example:"
                     Write-Host '      "ChatAppConfig": {'
                     Write-Host '        "mattermost_url": "https://mm.your-server.com",'
                     Write-Host '        "mattermost_channel": "your-channel-id",'
                     Write-Host '        "mattermost_token": "your-token"'
                     Write-Host '      }'
-                    Write-Host "   3. Sla het bestand op en herstart dit script."
-                    Write-Host "Druk op een toets om af te sluiten..."
+                    Write-Host "   3. Save the file and restart this script."
+                    Write-Host "Press a key to exit..."
                     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                     exit 1
                 }
@@ -246,29 +246,29 @@ function Get-Config {
             "telegram" {
                 if (-not $config.ChatAppConfig.telegram_bot_token -or $config.ChatAppConfig.telegram_bot_token -eq "" -or
                     -not $config.ChatAppConfig.telegram_chat_id -or $config.ChatAppConfig.telegram_chat_id -eq "") {
-                    Write-Host "Fout: Telegram parameters (telegram_bot_token, telegram_chat_id) zijn niet volledig ingesteld in config.json."
-                    Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                    Write-Host "   2. Stel de Telegram parameters in onder ChatAppConfig, bijvoorbeeld:"
+                    Write-Host "Error: Telegram parameters (telegram_bot_token, telegram_chat_id) are not fully set in config.json."
+                    Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+                    Write-Host "   2. Set the Telegram parameters under ChatAppConfig, for example:"
                     Write-Host '      "ChatAppConfig": {'
                     Write-Host '        "telegram_bot_token": "your-bot-token",'
                     Write-Host '        "telegram_chat_id": "your-chat-id"'
                     Write-Host '      }'
-                    Write-Host "   3. Sla het bestand op en herstart dit script."
-                    Write-Host "Druk op een toets om af te sluiten..."
+                    Write-Host "   3. Save the file and restart this script."
+                    Write-Host "Press a key to exit..."
                     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                     exit 1
                 }
             }
             "discord" {
                 if (-not $config.ChatAppConfig.discord_webhook_url -or $config.ChatAppConfig.discord_webhook_url -eq "") {
-                    Write-Host "Fout: Discord parameter (discord_webhook_url) is niet ingesteld in config.json."
-                    Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                    Write-Host "   2. Stel de Discord parameter in onder ChatAppConfig, bijvoorbeeld:"
+                    Write-Host "Error: Discord parameter (discord_webhook_url) is not set in config.json."
+                    Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+                    Write-Host "   2. Set the Discord parameter under ChatAppConfig, for example:"
                     Write-Host '      "ChatAppConfig": {'
                     Write-Host '        "discord_webhook_url": "your-webhook-url"'
                     Write-Host '      }'
-                    Write-Host "   3. Sla het bestand op en herstart dit script."
-                    Write-Host "Druk op een toets om af te sluiten..."
+                    Write-Host "   3. Save the file and restart this script."
+                    Write-Host "Press a key to exit..."
                     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                     exit 1
                 }
@@ -277,9 +277,9 @@ function Get-Config {
                 if (-not $config.ChatAppConfig.sftp_host -or $config.ChatAppConfig.sftp_host -eq "" -or
                     -not $config.ChatAppConfig.sftp_user -or $config.ChatAppConfig.sftp_user -eq "" -or
                     -not $config.ChatAppConfig.sftp_password -or $config.ChatAppConfig.sftp_password -eq "") {
-                    Write-Host "Fout: SFTP parameters (sftp_host, sftp_user, sftp_password) zijn niet volledig ingesteld in config.json."
-                    Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                    Write-Host "   2. Stel de SFTP parameters in onder ChatAppConfig, bijvoorbeeld:"
+                    Write-Host "Error: SFTP parameters (sftp_host, sftp_user, sftp_password) are not fully set in config.json."
+                    Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+                    Write-Host "   2. Set the SFTP parameters under ChatAppConfig, for example:"
                     Write-Host '      "ChatAppConfig": {'
                     Write-Host '        "sftp_host": "sftp.example.com",'
                     Write-Host '        "sftp_port": "22",'
@@ -287,19 +287,19 @@ function Get-Config {
                     Write-Host '        "sftp_password": "password",'
                     Write-Host '        "sftp_path": "clips"'
                     Write-Host '      }'
-                    Write-Host "   3. Sla het bestand op en herstart dit script."
-                    Write-Host "Druk op een toets om af te sluiten..."
+                    Write-Host "   3. Save the file and restart this script."
+                    Write-Host "Press a key to exit..."
                     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                     exit 1
                 }
             }
             default {
-                Write-Host "Fout: Ongeldige ChatApp waarde in config.json: $($config.ChatApp)"
-                Write-Host "   Geldige waarden zijn: 'mattermost', 'telegram', 'discord', 'sftp'."
-                Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-                Write-Host "   2. Stel een geldige ChatApp in, bijvoorbeeld: {`"ChatApp`": `"mattermost`"}"
-                Write-Host "   3. Sla het bestand op en herstart dit script."
-                Write-Host "Druk op een toets om af te sluiten..."
+                Write-Host "Error: Invalid ChatApp value in config.json: $($config.ChatApp)"
+                Write-Host "   Valid values are: 'mattermost', 'telegram', 'discord', 'sftp'."
+                Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+                Write-Host "   2. Set a valid ChatApp, for example: {`"ChatApp`": `"mattermost`"}"
+                Write-Host "   3. Save the file and restart this script."
+                Write-Host "Press a key to exit..."
                 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
                 exit 1
             }
@@ -308,21 +308,21 @@ function Get-Config {
 
     # Validate BacktrackSeconds & DurationSeconds
     if (-not $config.BacktrackSeconds -or $config.BacktrackSeconds -lt 0 -or $config.BacktrackSeconds -gt 300) {
-        Write-Host "Fout: BacktrackSeconds moet een getal zijn tussen 0 en 300 in config.json."
-        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-        Write-Host "   2. Stel een geldige BacktrackSeconds in, bijvoorbeeld: {`"BacktrackSeconds`": 30}"
-        Write-Host "   3. Sla het bestand op en herstart dit script."
-        Write-Host "Druk op een toets om af te sluiten..."
+        Write-Host "Error: BacktrackSeconds must be a number between 0 and 300 in config.json."
+        Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+        Write-Host "   2. Set a valid BacktrackSeconds, for example: {`"BacktrackSeconds`": 30}"
+        Write-Host "   3. Save the file and restart this script."
+        Write-Host "Press a key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
 
     if (-not $config.DurationSeconds -or $config.DurationSeconds -lt 1 -or $config.DurationSeconds -gt 300) {
-        Write-Host "Fout: DurationSeconds moet een getal zijn tussen 1 en 300 in config.json."
-        Write-Host "   1. Open config.json in de ClipManager map ($installDir)."
-        Write-Host "   2. Stel een geldige DurationSeconds in, bijvoorbeeld: {`"DurationSeconds`": 30}"
-        Write-Host "   3. Sla het bestand op en herstart dit script."
-        Write-Host "Druk op een toets om af te sluiten..."
+        Write-Host "Error: DurationSeconds must be a number between 1 and 300 in config.json."
+        Write-Host "   1. Open config.json in the ClipManager folder ($installDir)."
+        Write-Host "   2. Set a valid DurationSeconds, for example: {`"DurationSeconds`": 30}"
+        Write-Host "   3. Save the file and restart this script."
+        Write-Host "Press a key to exit..."
         $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         exit 1
     }
@@ -376,8 +376,8 @@ switch ($chatApp) {
     default {
         # Skip if chatApp is empty during first run
         if (-not $firstRun) {
-            Write-Host "Fout: Ongeldige ChatApp waarde: $chatApp"
-            Write-Host "Druk op een toets om af te sluiten..."
+            Write-Host "Error: Invalid ChatApp value: $chatApp"
+            Write-Host "Press a key to exit..."
             $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             exit 1
         }
@@ -403,10 +403,10 @@ function Find-ArduinoPorts {
     $ports = [System.IO.Ports.SerialPort]::GetPortNames()
     $arduinoPorts = @{}
 
-    Write-Host "Beschikbare poorten: $($ports -join ', ')"
+    Write-Host "Available ports: $($ports -join ', ')"
     foreach ($portName in $ports) {
         try {
-            Write-Host "Probeer poort $portName..."
+            Write-Host "Trying port $portName..."
             $port = New-Object System.IO.Ports.SerialPort $portName, $baudRate, 'None', 8, 'One'
             $port.ReadTimeout = 1000
             $port.WriteTimeout = 1000
@@ -415,26 +415,26 @@ function Find-ArduinoPorts {
             $port.WriteLine("IDENTIFY")
             Start-Sleep -Milliseconds 500
             $response = $port.ReadLine().Trim()
-            Write-Host "Antwoord van ${portName}: $response"
+            Write-Host "Response from ${portName}: $response"
             $port.Close()
             if ($response.StartsWith("CLIPMANAGER_")) {
-                Write-Host "Arduino gevonden op $portName met identifier $response"
+                Write-Host "Arduino found on $portName with identifier $response"
                 $arduinoPorts[$portName] = $response
             } else {
-                Write-Host "Geen geldige identifier op $portName"
+                Write-Host "No valid identifier on $portName"
             }
         } catch {
-            Write-Host "Fout bij het openen van ${portName}: $_"
+            Write-Host "Error opening ${portName}: $_"
             if ($port.IsOpen) { $port.Close() }
         }
     }
 
     if ($arduinoPorts.Count -eq 0) {
-        Write-Host "Geen Arduino's gevonden, blijf scannen..."
+        Write-Host "No Arduinos found, keep scanning..."
     } else {
-        Write-Host "Gevonden Arduino's: $($arduinoPorts.Count)"
+        Write-Host "Found Arduinos: $($arduinoPorts.Count)"
         foreach ($portName in $arduinoPorts.Keys) {
-            Write-Host "Poort ${portName}: $($arduinoPorts[$portName])"
+            Write-Host "Port ${portName}: $($arduinoPorts[$portName])"
         }
     }
     return $arduinoPorts
@@ -453,13 +453,13 @@ function Monitor-Port {
             } else {
                 $category = UrlEncode -text $categoryRaw
             }
-            Write-Host "[$portName] Categorie: $category"
+            Write-Host "[$portName] Category: $category"
         } else {
-            Write-Host "[$portName] Ongeldige identifier: $identifier"
+            Write-Host "[$portName] Invalid identifier: $identifier"
             return
         }
     } catch {
-        Write-Host "[$portName] Fout bij het bepalen van de categorie: $_"
+        Write-Host "[$portName] Error determining the category: $_"
         return
     }
 
@@ -468,19 +468,19 @@ function Monitor-Port {
 
     try {
         $port.Open()
-        Write-Host "Thread gestart voor $portName ($identifier)"
+        Write-Host "Thread started for $portName ($identifier)"
     } catch {
-        Write-Host "Kon ${portName} niet openen voor ${identifier}: $_"
+        Write-Host "Could not open ${portName} for ${identifier}: $_"
         return
     }
 
     while ($true) {
         try {
             $line = $port.ReadLine().Trim()
-            Write-Host "[$portName] Ontvangen: $line"
+            Write-Host "[$portName] Received: $line"
 
             if ($line -eq "BUTTON_PRESSED") {
-                Write-Host "[$portName] Request wordt verstuurd voor $identifier..."
+                Write-Host "[$portName] Request is being sent for $identifier..."
                 # Play the sound when button is pressed
                 Play-SoundBasedOnIdentifier -identifier $identifier
                 try {
@@ -488,16 +488,16 @@ function Monitor-Port {
                     $requestUrl = [string]::Format($apiEndpoint, $category)
                     Invoke-WebRequest -Uri $requestUrl -UseBasicParsing
 
-                    Write-Host "[$portName] Verzoek verstuurd om $(Get-Date -Format 'HH:mm:ss')"
+                    Write-Host "[$portName] Request sent at $(Get-Date -Format 'HH:mm:ss')"
                     Start-Sleep -Seconds 5
                 } catch {
-                    Write-Host "[$portName] Fout bij verzoek: $_"
+                    Write-Host "[$portName] Error with request: $_"
                 }
             }
         } catch {
-            Write-Host "[$portName] Leesfout: $_"
+            Write-Host "[$portName] Read error: $_"
             if (-not $port.IsOpen) {
-                Write-Host "[$portName] Poort is gesloten, stoppen met monitoren..."
+                Write-Host "[$portName] Port is closed, stopping monitoring..."
                 break
             } else {
                 Start-Sleep -Milliseconds 500
@@ -508,8 +508,8 @@ function Monitor-Port {
 
 # Main loop: keep searching for Arduinos
 try {
-    Write-Host "ClipManager is gestart en draait op de achtergrond."
-    Write-Host "Script gestart, zoeken naar Arduino's..."
+    Write-Host "ClipManager has started and is running in the background."
+    Write-Host "Script started, searching for Arduinos..."
     while ($true) {
         # Find all available Arduino ports
         $arduinoPorts = Find-ArduinoPorts
@@ -520,7 +520,7 @@ try {
             $identifier = $arduinoPorts[$portName]
             $jobExists = $runningJobs | Where-Object { $_.Command -like "*$portName*" }
             if (-not $jobExists) {
-                Write-Host "Start nieuwe thread voor $portName ($identifier)"
+                Write-Host "Starting new thread for $portName ($identifier)"
                 Start-Job -ScriptBlock {
                     param($portName, $identifier, $useSystemWeb, $apiEndpoint, $buttonSoundOneHitWonder, $buttonSoundBlunder)
 
@@ -544,7 +544,7 @@ try {
                         try {
                             Add-Type -AssemblyName System.Web
                         } catch {
-                            Write-Host "[$portName] Fout bij het laden van System.Web in thread: $_"
+                            Write-Host "[$portName] Error loading System.Web in thread: $_"
                             $useSystemWeb = $false
                         }
                     }
@@ -575,7 +575,7 @@ try {
                             Start-Sleep -Milliseconds 100
                             #Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
                         } catch {
-                            Write-Host "Fout bij het afspelen van geluid: $_"
+                            Write-Host "Error playing sound: $_"
                         }
                     }
 
@@ -593,13 +593,13 @@ try {
                                 } else {
                                     $category = UrlEncode -text $categoryRaw
                                 }
-                                Write-Host "[$portName] Categorie: $category"
+                                Write-Host "[$portName] Category: $category"
                             } else {
-                                Write-Host "[$portName] Ongeldige identifier: $identifier"
+                                Write-Host "[$portName] Invalid identifier: $identifier"
                                 return
                             }
                         } catch {
-                            Write-Host "[$portName] Fout bij het bepalen van de categorie: $_"
+                            Write-Host "[$portName] Error determining the category: $_"
                             return
                         }
 
@@ -609,19 +609,19 @@ try {
 
                         try {
                             $port.Open()
-                            Write-Host "Thread gestart voor $portName ($identifier)"
+                            Write-Host "Thread started for $portName ($identifier)"
                         } catch {
-                            Write-Host "Kon ${portName} niet openen voor ${identifier}: $_"
+                            Write-Host "Could not open ${portName} for ${identifier}: $_"
                             return
                         }
 
                         while ($true) {
                             try {
                                 $line = $port.ReadLine().Trim()
-                                Write-Host "[$portName] Ontvangen: $line"
+                                Write-Host "[$portName] Received: $line"
 
                                 if ($line -eq "BUTTON_PRESSED") {
-                                    Write-Host "[$portName] Request wordt verstuurd voor $identifier..."
+                                    Write-Host "[$portName] Request is being sent for $identifier..."
                                     # Play the sound when button is pressed
                                     Play-SoundBasedOnIdentifier -identifier $identifier
                                     try {
@@ -629,16 +629,16 @@ try {
                                         $requestUrl = [string]::Format($apiEndpoint, $category)
                                         Invoke-WebRequest -Uri $requestUrl -UseBasicParsing
 
-                                        Write-Host "[$portName] Verzoek verstuurd om $(Get-Date -Format 'HH:mm:ss')"
+                                        Write-Host "[$portName] Request sent at $(Get-Date -Format 'HH:mm:ss')"
                                         Start-Sleep -Seconds 5
                                     } catch {
-                                        Write-Host "[$portName] Fout bij verzoek: $_"
+                                        Write-Host "[$portName] Error with request: $_"
                                     }
                                 }
                             } catch {
-                                Write-Host "[$portName] Leesfout: $_"
+                                Write-Host "[$portName] Read error: $_"
                                 if (-not $port.IsOpen) {
-                                    Write-Host "[$portName] Poort is gesloten, stoppen met monitoren..."
+                                    Write-Host "[$portName] Port is closed, stopping monitoring..."
                                     break
                                 } else {
                                     Start-Sleep -Milliseconds 500
@@ -658,8 +658,8 @@ try {
         Get-Job | Where-Object { $_.State -ne "Running" } | Remove-Job
     }
 } catch {
-    Write-Host "Onverwachte fout in hoofdloop: $_"
-    Write-Host "Druk op een toets om af te sluiten..."
+    Write-Host "Unexpected error in main loop: $_"
+    Write-Host "Press a key to exit..."
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     exit 1
 }
