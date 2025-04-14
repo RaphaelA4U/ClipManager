@@ -836,6 +836,15 @@
             team1 = team1.replace(/_/g, ' ');
             team2 = team2.replace(/_/g, ' ');
             
+            // If title is empty but category exists, use category as title
+            if (!title && category) {
+                title = category;
+            }
+            // If category is empty but title exists, use title as category
+            if (!category && title) {
+                category = title;
+            }
+            
             return { title, category, team1, team2, dateStr, timeStr };
         }
 
@@ -931,7 +940,7 @@
                 const timestamp = clip.timestamp.toLocaleDateString() + ' ' +
                                  clip.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                 
-                // Display title as the main heading, fallback to category if title is empty
+                // Always show title
                 let displayTitle = clip.title || clip.category || 'Clip';
                 
                 let teams = '';
@@ -959,7 +968,7 @@
                     </div>
                     <div class="clip-info">
                         <div class="clip-title">${displayTitle}</div>
-                        ${clip.category && clip.title !== clip.category ? `<div class="clip-metadata">${clip.category}</div>` : ''}
+                        <div class="clip-metadata">${clip.category}</div>
                         ${teams ? `<div class="clip-metadata">${teams}</div>` : ''}
                         <div class="clip-metadata">${timestamp}</div>
                         <div class="clip-metadata">${formatFileSize(clip.size)}</div>
@@ -1110,7 +1119,7 @@
         function downloadClip(path, filename) {
             const downloadUrl = `/api/clip/stream?path=${encodeURIComponent(path)}&${new URLSearchParams({
                 sftp_host: sftpSettings.sftp_host,
-                sftp_port: sftpSettings.sftp_port,
+                sftp_port: sftpSettings.sftp_port || "22",
                 sftp_user: sftpSettings.sftp_user,
                 sftp_password: sftpSettings.sftp_password,
                 download: 'true'

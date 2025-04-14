@@ -1334,9 +1334,11 @@ func (cm *ClipManager) generateSFTPFilename(r *http.Request) string {
     team1 = sanitize(team1)
     team2 = sanitize(team2)
     
-    // Use category as fallback for title if title is empty
-    if title == "" {
+    // Use each field as fallback for the other if one is empty
+    if title == "" && category != "" {
         title = category
+    } else if category == "" && title != "" {
+        category = title
     }
 
     timestamp := time.Now().Format("2006-01-02_15-04")
@@ -1348,7 +1350,7 @@ func (cm *ClipManager) generateSFTPFilename(r *http.Request) string {
     }
     
     // Add category to parts if it exists and is different from title
-    if category != "" && category != title {
+    if category != "" {
         parts = append(parts, category)
     }
 
@@ -1952,6 +1954,13 @@ func (cm *ClipManager) HandleEditClip(w http.ResponseWriter, r *http.Request) {
     title := sanitize(req.Title)
     category := sanitize(req.Category)
     
+    // Use each field as fallback for the other if one is empty
+    if title == "" && category != "" {
+        title = category
+    } else if category == "" && title != "" {
+        category = title
+    }
+    
     // Create new filename
     var parts []string
     
@@ -1960,8 +1969,8 @@ func (cm *ClipManager) HandleEditClip(w http.ResponseWriter, r *http.Request) {
         parts = append(parts, title)
     }
     
-    // Add category if it exists and is different from title
-    if category != "" && category != title {
+    // Add category if it exists
+    if category != "" {
         parts = append(parts, category)
     }
     
