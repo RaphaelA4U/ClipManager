@@ -1172,53 +1172,143 @@
             }
             
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            console.log('Attempting WebSocket connection to:', wsUrl);
             
-            ws.onopen = () => {
-                console.log('WebSocket connection established');
-                // Stop polling if we have a WebSocket connection
-                if (pollingInterval) {
-                    clearInterval(pollingInterval);
-                    pollingInterval = null;
-                }
-            };
-            
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    console.log('New clip notification:', data);
-                    
-                    // Refresh clips list
-                    fetchClips();
-                    
-                    // Always play new clip unless player is already active
-                    const playerContainer = document.getElementById('clip-player-container');
-                    if (data.clip_path && playerContainer.style.display === 'none') {
-                        setTimeout(() => playClip(data.clip_path), 500);
+            try {
+                // Add connection timeout handling
+                const connectionTimeout = setTimeout(() => {
+                    console.error('WebSocket connection timed out');
+                    if (ws && ws.readyState === WebSocket.CONNECTING) {
+                        ws.close();
                     }
-                } catch (e) {
-                    console.error('Error processing WebSocket message:', e);
-                }
-            };
-            
-            ws.onclose = () => {
-                console.log('WebSocket connection closed');
-                // Reconnect after delay
-                setTimeout(setupWebSocket, 5000);
+                }, 10000); // 10 second timeout
                 
-                // Start polling as fallback if not already polling
-                if (!pollingInterval) {
-                    setupPolling();
-                }
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
+                ws = new WebSocket(wsUrl);
+                
+                ws.onopen = () => {
+                    console.log('WebSocket connection established');
+                    clearTimeout(connectionTimeout);
+                    
+                    // Reset reconnection attempts counter on successful connection
+                    ws._reconnectionAttempts = 0;
+                    
+                    // Stop polling if we have a WebSocket connection
+                    if (pollingInterval) {
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                    }
+                    
+                    // Send an initial message to verify two-way communication
+                    try {
+                        ws.send(JSON.stringify({type: "hello", client: "browser"}));
+                        console.log("Sent initial hello message");
+                        
+                        // Send a ping message every 30 seconds
+                        ws._pingInterval = setInterval(() => {
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                try {
+                                    console.log('Sending WebSocket ping');
+                                    ws.send(JSON.stringify({type: "ping", timestamp: Date.now()}));
+                                } catch (pingErr) {
+                                    console.error('Error sending ping:', pingErr);
+                                    clearInterval(ws._pingInterval);
+                                }
+                            } else if (ws) {
+                                console.warn('WebSocket not open for ping, state:', ws.readyState);
+                                clearInterval(ws._pingInterval);
+                            }
+                        }, 30000);
+                    } catch (e) {
+                        console.error('Error in onopen handler:', e);
+                    }
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        console.log('Raw message received:', event.data);
+                        const data = JSON.parse(event.data);
+                        console.log('WebSocket message received:', data);
+                        
+                        // Handle ping/pong to keep connection alive
+                        if (data.type === "pong") {
+                            console.log('Received pong from server');
+                            return;
+                        }
+                        
+                        // Refresh clips list if it's a new clip notification
+                        if (data.clip_path) {
+                            console.log('New clip notification received for path:', data.clip_path);
+                            
+                            // First refresh the clip list
+                            fetchClips();
+                            
+                            // Add a delay to ensure the clip is properly fetched and available
+                            setTimeout(() => {
+                                console.log('Attempting to play new clip:', data.clip_path);
+                                const playerContainer = document.getElementById('clip-player-container');
+                                
+                                // Make sure we're not already playing something
+                                if (playerContainer.style.display === 'none') {
+                                    // Ensure the clip path is properly formatted for playback
+                                    playClip(data.clip_path);
+                                    console.log('Triggered playback for new clip');
+                                } else {
+                                    console.log('Player already active, skipping auto-play of new clip');
+                                }
+                            }, 1500); // Increased delay to ensure the clip is available
+                        }
+                    } catch (e) {
+                        console.error('Error processing WebSocket message:', e, 'Raw message:', event.data);
+                    }
+                };
+                
+                ws.onclose = (event) => {
+                    console.log('WebSocket connection closed', {
+                        code: event.code, 
+                        reason: event.reason,
+                        wasClean: event.wasClean
+                    });
+                    
+                    clearTimeout(connectionTimeout);
+                    
+                    // Clear ping interval
+                    if (ws._pingInterval) {
+                        clearInterval(ws._pingInterval);
+                        ws._pingInterval = null;
+                    }
+                    
+                    // Implement exponential backoff for reconnection
+                    ws._reconnectionAttempts = (ws._reconnectionAttempts || 0) + 1;
+                    const maxDelay = Math.min(30000, Math.pow(2, ws._reconnectionAttempts) * 1000);
+                    const reconnectDelay = Math.min(5000, Math.random() * maxDelay);
+                    
+                    console.log(`Reconnecting (attempt ${ws._reconnectionAttempts}) in ${reconnectDelay}ms`);
+                    setTimeout(setupWebSocket, reconnectDelay);
+                    
+                    // Start polling as fallback if not already polling
+                    if (!pollingInterval) {
+                        setupPolling();
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    clearTimeout(connectionTimeout);
+                    
+                    // Log socket state
+                    console.log('WebSocket readyState:', ws.readyState);
+                    
+                    // Start polling as fallback if not already polling
+                    if (!pollingInterval) {
+                        setupPolling();
+                    }
+                };
+            } catch (e) {
+                console.error('Error creating WebSocket connection:', e);
                 // Start polling as fallback
-                if (!pollingInterval) {
-                    setupPolling();
-                }
-            };
+                setupPolling();
+            }
         }
 
         function setupPolling() {

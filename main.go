@@ -1859,15 +1859,36 @@ func (cm *ClipManager) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
     // Simple ping/pong to keep connection alive
     for {
-        messageType, _, err := conn.ReadMessage()
+        messageType, message, err := conn.ReadMessage()
         if err != nil {
+            cm.log.Warning("WebSocket read error: %v", err)
             break
         }
 
-        // If we receive a ping, respond with pong
-        if (messageType == websocket.PingMessage) {
+        // Handle built-in WebSocket ping frames
+        if messageType == websocket.PingMessage {
             if err := conn.WriteMessage(websocket.PongMessage, []byte{}); err != nil {
+                cm.log.Warning("Failed to send pong: %v", err)
                 break
+            }
+            continue
+        }
+
+        // Handle application-level ping messages (JSON with type "ping")
+        if messageType == websocket.TextMessage {
+            // Try to parse as JSON
+            var msgData map[string]interface{}
+            if err := json.Unmarshal(message, &msgData); err == nil {
+                if msgType, ok := msgData["type"].(string); ok && msgType == "ping" {
+                    // Respond with a pong
+                    pongResponse := map[string]string{"type": "pong"}
+                    if pongData, err := json.Marshal(pongResponse); err == nil {
+                        if err := conn.WriteMessage(websocket.TextMessage, pongData); err != nil {
+                            cm.log.Warning("Failed to send pong message: %v", err)
+                            break
+                        }
+                    }
+                }
             }
         }
     }
