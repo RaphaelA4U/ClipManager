@@ -145,7 +145,7 @@ func NewClipManager(tempDir string, hostPort string, cameraIP string) (*ClipMana
     cm := &ClipManager{
         tempDir:         absTemp,
         httpClient:      &http.Client{Timeout: 60 * time.Second},
-        limiter:         rate.NewLimiter(rate.Limit(3), 5),
+        limiter:         rate.NewLimiter(rate.Limit(100), 100),
         hostPort:        hostPort,
         maxRetries:      3,
         retryDelay:      5 * time.Second,
