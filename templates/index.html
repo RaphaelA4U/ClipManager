@@ -1450,6 +1450,7 @@
         const YT_CLIENT_ID = '177621281701-i482ftiuvtg25u0pi76v90o9ji9t133d.apps.googleusercontent.com';
         let currentClip = null;
         let tokenClient = null;
+        let youtubeUserInfo = null;  // Store YouTube user info globally
         
         function initYouTubeAuth() {
             // Initialize the token client for OAuth 2.0 implicit flow
@@ -1469,14 +1470,34 @@
                         .then(response => response.json())
                         .then(data => {
                             let channelName = 'YouTube Account';
+                            let channelId = '';
+                            let thumbnailUrl = '';
+                            
                             if (data.items && data.items.length > 0) {
                                 channelName = data.items[0].snippet.title;
+                                channelId = data.items[0].id;
+                                if (data.items[0].snippet.thumbnails && data.items[0].snippet.thumbnails.default) {
+                                    thumbnailUrl = data.items[0].snippet.thumbnails.default.url;
+                                }
                             }
                             
+                            // Store user info in localStorage
+                            youtubeUserInfo = {
+                                channelName,
+                                channelId,
+                                thumbnailUrl
+                            };
+                            localStorage.setItem('yt_user_info', JSON.stringify(youtubeUserInfo));
+                            
                             // Update UI
-                            document.getElementById('ytStatus').innerText = `Signed in as: ${channelName}`;
-                            document.getElementById('signInYouTube').style.display = 'none';
-                            document.getElementById('signOutYouTube').style.display = 'block';
+                            updateYouTubeAuthUI();
+                            
+                            // If there's a pending Promise, resolve it
+                            if (tokenClient._resolve) {
+                                tokenClient._resolve();
+                                tokenClient._resolve = null;
+                                tokenClient._reject = null;
+                            }
                             
                             // If there's a pending upload, continue with it
                             if (currentClip) {
@@ -1485,30 +1506,83 @@
                         })
                         .catch(error => {
                             console.error('Error fetching channel info:', error);
-                            document.getElementById('ytStatus').innerText = 'Signed in (channel info unavailable)';
-                            document.getElementById('signInYouTube').style.display = 'none';
-                            document.getElementById('signOutYouTube').style.display = 'block';
+                            youtubeUserInfo = { channelName: 'Unknown User' };
+                            localStorage.setItem('yt_user_info', JSON.stringify(youtubeUserInfo));
+                            updateYouTubeAuthUI();
+                            
+                            if (tokenClient._reject) {
+                                tokenClient._reject(error);
+                                tokenClient._resolve = null;
+                                tokenClient._reject = null;
+                            }
                         });
                     } else {
                         console.error('No access token received');
                         document.getElementById('ytStatus').innerText = 'Authentication failed';
+                        
+                        if (tokenClient._reject) {
+                            tokenClient._reject(new Error('No access token received'));
+                            tokenClient._resolve = null;
+                            tokenClient._reject = null;
+                        }
                     }
                 },
                 error_callback: (error) => {
                     console.error('GIS Auth Error:', error);
                     document.getElementById('ytStatus').innerText = `Error: ${error.type || 'Authentication failed'}`;
+                    
+                    if (tokenClient._reject) {
+                        tokenClient._reject(error);
+                        tokenClient._resolve = null;
+                        tokenClient._reject = null;
+                    }
                 }
             });
 
-            // Check if we have a token in localStorage and verify it
+            // Load YouTube auth state from localStorage on init
+            loadYouTubeAuthState();
+        }
+        
+        function loadYouTubeAuthState() {
+            // Check if we have a token in localStorage
             const storedToken = localStorage.getItem('yt_access_token');
+            const storedUserInfo = localStorage.getItem('yt_user_info');
+            
+            if (storedUserInfo) {
+                try {
+                    youtubeUserInfo = JSON.parse(storedUserInfo);
+                } catch (e) {
+                    youtubeUserInfo = null;
+                    localStorage.removeItem('yt_user_info');
+                }
+            }
+            
             if (storedToken) {
                 verifyToken(storedToken);
             } else {
-                document.getElementById('ytStatus').innerText = 'Not signed in';
+                clearYouTubeAuthState();
+            }
+        }
+        
+        function updateYouTubeAuthUI() {
+            const ytStatus = document.getElementById('ytStatus');
+            
+            if (youtubeUserInfo && localStorage.getItem('yt_access_token')) {
+                ytStatus.innerHTML = `Signed in as: <strong>${youtubeUserInfo.channelName}</strong>`;
+                document.getElementById('signInYouTube').style.display = 'none';
+                document.getElementById('signOutYouTube').style.display = 'block';
+            } else {
+                ytStatus.innerText = 'Not signed in';
                 document.getElementById('signInYouTube').style.display = 'block';
                 document.getElementById('signOutYouTube').style.display = 'none';
             }
+        }
+        
+        function clearYouTubeAuthState() {
+            localStorage.removeItem('yt_access_token');
+            localStorage.removeItem('yt_user_info');
+            youtubeUserInfo = null;
+            updateYouTubeAuthUI();
         }
         
         function verifyToken(token) {
@@ -1524,30 +1598,42 @@
             })
             .then(data => {
                 let channelName = 'YouTube Account';
+                let channelId = '';
+                let thumbnailUrl = '';
+                
                 if (data.items && data.items.length > 0) {
                     channelName = data.items[0].snippet.title;
+                    channelId = data.items[0].id;
+                    if (data.items[0].snippet.thumbnails && data.items[0].snippet.thumbnails.default) {
+                        thumbnailUrl = data.items[0].snippet.thumbnails.default.url;
+                    }
                 }
                 
-                document.getElementById('ytStatus').innerText = `Signed in as: ${channelName}`;
-                document.getElementById('signInYouTube').style.display = 'none';
-                document.getElementById('signOutYouTube').style.display = 'block';
+                youtubeUserInfo = {
+                    channelName,
+                    channelId,
+                    thumbnailUrl
+                };
+                localStorage.setItem('yt_user_info', JSON.stringify(youtubeUserInfo));
+                updateYouTubeAuthUI();
             })
             .catch(error => {
                 console.error('Token verification failed:', error);
-                localStorage.removeItem('yt_access_token');
-                document.getElementById('ytStatus').innerText = 'Not signed in';
-                document.getElementById('signInYouTube').style.display = 'block';
-                document.getElementById('signOutYouTube').style.display = 'none';
+                clearYouTubeAuthState();
             });
         }
         
         function signInYouTube() {
             return new Promise((resolve, reject) => {
                 if (!tokenClient) {
-                    reject(new Error('Google Identity Services not initialized'));
+                    const error = new Error('Google Identity Services not initialized');
+                    document.getElementById('ytStatus').innerText = 'Error: Authentication service not loaded';
+                    reject(error);
                     return;
                 }
 
+                document.getElementById('ytStatus').innerText = 'Connecting to YouTube...';
+                
                 // Store a reference to the resolve/reject functions for later
                 tokenClient._resolve = resolve;
                 tokenClient._reject = reject;
@@ -1562,18 +1648,14 @@
         function signOutYouTube() {
             const token = localStorage.getItem('yt_access_token');
             if (token) {
+                document.getElementById('ytStatus').innerText = 'Signing out...';
                 // Revoke the token
                 google.accounts.oauth2.revoke(token, () => {
-                    localStorage.removeItem('yt_access_token');
-                    document.getElementById('ytStatus').innerText = 'Not signed in';
-                    document.getElementById('signInYouTube').style.display = 'block';
-                    document.getElementById('signOutYouTube').style.display = 'none';
+                    clearYouTubeAuthState();
                     console.log('YouTube token revoked and removed');
                 });
             } else {
-                document.getElementById('ytStatus').innerText = 'Not signed in';
-                document.getElementById('signInYouTube').style.display = 'block';
-                document.getElementById('signOutYouTube').style.display = 'none';
+                clearYouTubeAuthState();
             }
         }
         

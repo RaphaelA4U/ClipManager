@@ -1009,7 +1009,6 @@ func (cm *ClipManager) sendToTelegram(filePath, botToken, chatID string, r *http
         defer file.Close()
 
         captionText := cm.buildClipMessage(r)
-        captionText += "\n(if distorted, download and view elsewhere)"
 
         chatID = strings.Trim(chatID, `"'`)
         if chatID == "" {
